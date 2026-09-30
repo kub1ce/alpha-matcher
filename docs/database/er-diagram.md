@@ -1,0 +1,101 @@
+# ER-диаграмма
+
+```mermaid
+erDiagram
+    CLIENT ||--o{ CONTRACT : has
+    CONTRACT_STATUS ||--o{ CONTRACT : classifies
+    CLIENT o|--o{ OPERATION : monitored_for
+    OPERATION_TYPE ||--o{ OPERATION : classifies
+    CURRENCY ||--o{ OPERATION : denominates
+    OPERATION ||--o{ OPERATION_PARTY : has
+    OPERATION_PARTY_ROLE ||--o{ OPERATION_PARTY : defines
+    CLIENT o|--o{ OPERATION_PARTY : identifies
+    OPERATION ||--o{ OPERATION_CONTRACT_MATCH : has_candidates
+    CONTRACT ||--o{ OPERATION_CONTRACT_MATCH : candidate_for
+    MATCH_STATUS ||--o{ OPERATION_CONTRACT_MATCH : classifies
+    MATCH_METHOD ||--o{ OPERATION_CONTRACT_MATCH : produced_by
+
+    CLIENT {
+        BIGINT id PK
+        VARCHAR inn
+        VARCHAR name
+        DATETIME created_at
+        DATETIME updated_at
+    }
+    CONTRACT_STATUS {
+        SMALLINT id PK
+        VARCHAR code UK
+        VARCHAR name
+        BOOLEAN is_active
+    }
+    CONTRACT {
+        BIGINT id PK
+        BIGINT client_id FK
+        VARCHAR contract_number
+        DATE contract_date
+        SMALLINT status_id FK
+        DATETIME created_at
+        DATETIME updated_at
+    }
+    OPERATION_TYPE {
+        SMALLINT id PK
+        VARCHAR code UK
+        VARCHAR name
+        BOOLEAN is_active
+    }
+    CURRENCY {
+        CHAR code PK
+        VARCHAR name
+        BOOLEAN is_active
+    }
+    OPERATION {
+        BIGINT id PK
+        BIGINT client_id FK
+        SMALLINT operation_type_id FK
+        DATETIME operation_at
+        DECIMAL amount
+        CHAR currency_code FK
+        TEXT payment_purpose
+        DATETIME created_at
+        DATETIME updated_at
+    }
+    OPERATION_PARTY_ROLE {
+        SMALLINT id PK
+        VARCHAR code UK
+        VARCHAR name
+        BOOLEAN is_active
+    }
+    OPERATION_PARTY {
+        BIGINT id PK
+        BIGINT operation_id FK
+        SMALLINT role_id FK
+        SMALLINT sequence_no
+        BIGINT client_id FK
+        VARCHAR name
+        VARCHAR inn
+        DATETIME created_at
+    }
+    MATCH_STATUS {
+        SMALLINT id PK
+        VARCHAR code UK
+        VARCHAR name
+        BOOLEAN is_active
+    }
+    MATCH_METHOD {
+        SMALLINT id PK
+        VARCHAR code UK
+        VARCHAR name
+        BOOLEAN is_active
+    }
+    OPERATION_CONTRACT_MATCH {
+        BIGINT id PK
+        BIGINT operation_id FK
+        BIGINT contract_id FK
+        SMALLINT status_id FK
+        SMALLINT method_id FK
+        TEXT reason
+        DATETIME decided_at
+        DATETIME created_at
+        DATETIME updated_at
+    }
+```
