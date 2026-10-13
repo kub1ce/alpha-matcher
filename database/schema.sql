@@ -82,13 +82,13 @@ CREATE TABLE operation_status (
 ) ENGINE=InnoDB;
 
 -- Валюты
-CREATE TABLE currency (
-    code CHAR(3) NOT NULL,
-    name VARCHAR(128) NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+-- CREATE TABLE currency (
+--     code CHAR(3) NOT NULL,
+--     name VARCHAR(128) NOT NULL,
+--     is_active BOOLEAN NOT NULL DEFAULT TRUE,
 
-    PRIMARY KEY (code)
-) ENGINE=InnoDB;
+--     PRIMARY KEY (code)
+-- ) ENGINE=InnoDB;
 
 
 CREATE TABLE client (
@@ -240,8 +240,9 @@ CREATE TABLE operation (
 
     operation_at DATETIME(6) NOT NULL,
 
-    currency_code CHAR(3) NOT NULL,
-    amount DECIMAL(19,4) NOT NULL,
+    -- Для MVP считаем что все операции в рублях
+    -- currency_code CHAR(3) NOT NULL,
+    -- amount DECIMAL(19,4) NOT NULL,
     amount_rub DECIMAL(19,4) NULL,
 
     payment_purpose TEXT NULL,
@@ -263,11 +264,11 @@ CREATE TABLE operation (
     KEY ix_operation_status (status_id),
     KEY ix_operation_contract (contract_id),
 
-    CONSTRAINT fk_operation_currency
-        FOREIGN KEY (currency_code)
-        REFERENCES currency (code)
-        ON UPDATE RESTRICT
-        ON DELETE RESTRICT,
+    -- CONSTRAINT fk_operation_currency
+    --     FOREIGN KEY (currency_code)
+    --     REFERENCES currency (code)
+    --     ON UPDATE RESTRICT
+    --     ON DELETE RESTRICT,
 
     CONSTRAINT fk_operation_status
         FOREIGN KEY (status_id)
@@ -291,7 +292,7 @@ CREATE TABLE operation_party (
 
     client_id BIGINT UNSIGNED NULL,
 
-    client_type_id SMALLINT UNSIGNED NULL,
+    client_type_id SMALLINT UNSIGNED NOT NULL,
 
     pin CHAR(6) NULL,
     branch_code CHAR(4) NULL,
@@ -405,7 +406,7 @@ INSERT INTO operation_status (code, name) VALUES
     ('REJECTED', 'Отклонена'),
     ('PROCESSED', 'Обработана');
 
-INSERT INTO currency (code, name) VALUES
-    ('RUB', 'Российский рубль'),
-    ('USD', 'Доллар США'),
-    ('EUR', 'Евро');
+-- INSERT INTO currency (code, name) VALUES
+--     ('RUB', 'Российский рубль'),
+--     ('USD', 'Доллар США'),
+--     ('EUR', 'Евро');

@@ -13,7 +13,6 @@ erDiagram
     CLIENT o|--o{ CONTRACT_PARTY : identifies
 
     OPERATION_STATUS ||--o{ OPERATION : defines
-    CURRENCY ||--o{ OPERATION : denominates
     CONTRACT o|--o{ OPERATION : linked_to
 
     OPERATION ||--o{ OPERATION_PARTY : has
@@ -115,18 +114,10 @@ erDiagram
         BOOLEAN is_active
     }
 
-    CURRENCY {
-        CHAR code PK
-        VARCHAR name
-        BOOLEAN is_active
-    }
-
     OPERATION {
         BIGINT id PK
         VARCHAR reference UK
         DATETIME operation_at
-        CHAR currency_code FK
-        DECIMAL amount
         DECIMAL amount_rub
         TEXT payment_purpose
         SMALLINT status_id FK
