@@ -28,3 +28,12 @@ replay_pid*
 
 # VSCode
 .vscode/
+
+# mvn
+/target/
+/node_modules/
+/frontend/generated/
+/.vaadin/
+
+# Generated files
+src/main/frontend/generated/
