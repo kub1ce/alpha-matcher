@@ -1,14 +1,71 @@
 """Finite, owned Windows demo lifecycle. Never targets another project's process/database."""
 from pathlib import Path
-import os,sys,json,secrets,subprocess,socket,time,datetime,urllib.request,hashlib,ctypes as C,ctypes.wintypes as W,contextlib,zipfile
+import os,sys,json,secrets,subprocess,socket,time,datetime,urllib.request,hashlib,ctypes as C,ctypes.wintypes as W,contextlib,zipfile,shutil,stat
 S=Path(__file__).resolve().parent;M=S.parent;REPO=M.parents[1]
 sys.path.insert(0,str(M/'stage5a'))
 from persistence_v2 import Lease,own_info,same_process,write
 from retention7 import retire
 PORT=33357;HTTP=8087
+MYSQL_FOLDER='mysql-8.4.8-winx64'
+MYSQL_URL='https://cdn.mysql.com/archives/mysql-8.4/'+MYSQL_FOLDER+'.zip'
+# Official archive downloaded over HTTPS; matches Oracle's published MD5 sidecar.
+MYSQL_SHA256='53685bb61a1efc5ecc1b35c1b6bd0d30ba799f4943a1ef2c34df464f5a774c7f'
 
 def read(p):return json.loads(Path(p).read_text(encoding='utf-8-sig'))
-def digest(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+def digest(p):
+ h=hashlib.sha256()
+ with Path(p).open('rb') as source:
+  for chunk in iter(lambda:source.read(1024*1024),b''):h.update(chunk)
+ return h.hexdigest()
+
+def ensure_engine():
+ artifact=M/'target/matching-engine-0.1-SNAPSHOT.jar'
+ if not artifact.exists():
+  subprocess.run([sys.executable,'-X','utf8','-B',str(M/'maintenance/build_accepted.py')],cwd=REPO,check=True,timeout=900)
+ verify_engine()
+
+def checked_mysql(home):
+ home=Path(home).resolve()
+ for name in ['mysqld.exe','mysql.exe','mysqladmin.exe']:
+  if not (home/'bin'/name).is_file():raise FileNotFoundError('Missing MySQL binary: '+str(home/'bin'/name))
+ version=subprocess.check_output([str(home/'bin/mysqld.exe'),'--version'],text=True,timeout=15)
+ if 'Ver 8.4.8 ' not in version:raise RuntimeError('MySQL 8.4.8 required: '+str(home))
+ return home
+
+def prepare_mysql():
+ override=os.environ.get('STAGE7_MYSQL_HOME')
+ if override:return checked_mysql(override)
+ installed=shutil.which('mysqld.exe')
+ if installed:
+  try:return checked_mysql(Path(installed).parent.parent)
+  except (OSError,RuntimeError,subprocess.SubprocessError):pass
+ cache=S/'runtime/dependencies';cache.mkdir(parents=True,exist_ok=True)
+ home=cache/MYSQL_FOLDER
+ if home.exists():return checked_mysql(home)
+ archive=cache/(MYSQL_FOLDER+'.zip')
+ if not archive.exists():
+  partial=cache/(archive.name+'.'+secrets.token_hex(6)+'.partial');started=time.monotonic();size=0
+  with urllib.request.urlopen(MYSQL_URL,timeout=30) as response,partial.open('xb') as output:
+   if not response.geturl().startswith('https://cdn.mysql.com/'):raise RuntimeError('Unexpected MySQL download origin')
+   while chunk:=response.read(1024*1024):
+    size+=len(chunk)
+    if size>512*1024*1024 or time.monotonic()-started>600:raise RuntimeError('MySQL download limit exceeded; partial download retained')
+    output.write(chunk)
+  # A failed or interrupted archive is never extracted or mistaken for a completed download.
+  if digest(partial)!=MYSQL_SHA256:raise RuntimeError('MySQL archive SHA256 mismatch; partial download retained')
+  partial.replace(archive)
+ if digest(archive)!=MYSQL_SHA256:raise RuntimeError('MySQL archive SHA256 mismatch: '+str(archive))
+ staging=cache/('extract-'+secrets.token_hex(6));staging.mkdir()
+ with zipfile.ZipFile(archive) as package:
+  if sum(x.file_size for x in package.infolist())>4*1024**3:raise RuntimeError('MySQL extraction size limit exceeded')
+  for entry in package.infolist():
+   target=(staging/entry.filename).resolve()
+   if not entry.filename.startswith(MYSQL_FOLDER+'/') or not target.is_relative_to((staging/MYSQL_FOLDER).resolve()) or stat.S_ISLNK(entry.external_attr>>16):
+    raise RuntimeError('Unsafe MySQL archive entry')
+  package.extractall(staging)
+ checked_mysql(staging/MYSQL_FOLDER).rename(home)
+ write(cache/'MYSQL_PACKAGE.json',{'url':MYSQL_URL,'sha256':MYSQL_SHA256,'home':str(home)})
+ return checked_mysql(home)
 def verify_engine():
  f=read(M/'stage6/final-acceptance/ENGINE_FREEZE.json')
  assert f['version']=='stage6-accepted-1ebb240ff4bc'
@@ -37,7 +94,7 @@ class Job:
  def close(self):
   if self.h:self.k.CloseHandle(self.h);self.h=None
 
-def run(root,verify):
+def run(root,verify,mysql_home):
  lease=Lease('stage7-demo');job=Job();server=app=None;state={'owner':own_info(),'run':str(root),'phase':'STARTING','dbPort':PORT,'httpPort':HTTP}
  def save(phase,**data):
   state.update(phase=phase,utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),**data);write(root/'STATE.json',state);write(S/'STATE.json',{'status':'STAGE7_IN_PROGRESS','phase':phase,'run':str(root),'owner':state['owner']})
@@ -49,7 +106,7 @@ def run(root,verify):
    with socket.socket() as sock:sock.bind(('127.0.0.1',port))
   write(root/'RETENTION.json',{'version':1,'presetOnlyUntilImported':True,'keepClosedPresetDatadirs':2})
   write(root/'RETIREMENT_RESULTS.json',retire(S/'runtime',same_process))
-  mysql=(Path(os.environ['STAGE7_MYSQL_HOME'])/'bin/mysqld.exe') if os.environ.get('STAGE7_MYSQL_HOME') else M/'stage4cd/runs/batch-20261030T212745/runtime/mysql-8.4.8-winx64/bin/mysqld.exe';assert mysql.is_file(),'Set STAGE7_MYSQL_HOME to MySQL8.4.8 installation';assert '8.4.8' in subprocess.check_output([str(mysql),'--version'],text=True),'MySQL8.4.8 required'
+  mysql=checked_mysql(mysql_home)/'bin/mysqld.exe'
   private=root/'private';private.mkdir();data=root/'mysql-data';data.mkdir()
   password=secrets.token_urlsafe(32);writerpass=secrets.token_urlsafe(32);rootpass=secrets.token_urlsafe(32);token=secrets.token_urlsafe(32)
   cnf=private/'server.cnf';cnf.write_text('[mysqld]\nbasedir='+mysql.parents[1].as_posix()+'\ndatadir='+data.as_posix()+'\nport='+str(PORT)+'\nbind-address=127.0.0.1\nmysqlx=OFF\nskip-name-resolve=ON\ninnodb-buffer-pool-size=134217728\nmax-connections=24\nlocal-infile=OFF\ncharacter-set-server=utf8mb4\ncollation-server=utf8mb4_unicode_ci\n',encoding='utf-8')
@@ -109,20 +166,29 @@ def run(root,verify):
 
 def start(verify):
  with contextlib.closing(Lease('stage7-demo-start')):
+  (S/'runtime').mkdir(parents=True,exist_ok=True)
   pointer=S/'runtime/ACTIVE.json'
   if pointer.exists():
    prior=read(pointer)
-   if same_process(prior['owner']):print('Existing owned demo: '+prior['run']);return
-  verify_engine();root=S/'runtime'/datetime.datetime.now().strftime('demo-%Y%m%dT%H%M%S');root.mkdir()
+   if prior.get('owner') and same_process(prior['owner']):print('Existing owned demo: '+prior['run']);return
+  ensure_engine();mysql_home=prepare_mysql()
+  root=S/'runtime'/(datetime.datetime.now().strftime('demo-%Y%m%dT%H%M%S')+'-'+secrets.token_hex(3));root.mkdir()
   with (root/'owner.log').open('xb') as log:
-   p=subprocess.Popen([sys.executable,'-X','utf8','-B','-u',str(Path(__file__).resolve()),'_run',str(root),str(int(verify))],cwd=S,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_BREAKAWAY_FROM_JOB|subprocess.CREATE_NO_WINDOW)
+   p=subprocess.Popen([sys.executable,'-X','utf8','-B','-u',str(Path(__file__).resolve()),'_run',str(root),str(int(verify)),str(mysql_home)],cwd=S,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_BREAKAWAY_FROM_JOB|subprocess.CREATE_NO_WINDOW)
   write(pointer,{'owner':own_info(p.pid),'run':str(root)});print(root)
+def status(action):
+ pointer=S/'runtime/ACTIVE.json'
+ if not pointer.exists():
+  print(json.dumps({'ownerAlive':False,'run':None,'state':{'phase':'NOT_STARTED'}}));return
+ a=read(pointer);run_dir=Path(a['run']).resolve()
+ if run_dir.parent!=(S/'runtime').resolve() or not run_dir.name.startswith('demo-'):raise RuntimeError('Invalid owned run path')
+ alive=bool(a.get('owner') and same_process(a['owner']))
+ if action=='stop' and alive:(run_dir/'STOP_REQUESTED').write_text('User/QA requested owned shutdown\n')
+ print(json.dumps({'ownerAlive':alive,'run':str(run_dir),'state':read(run_dir/'STATE.json') if (run_dir/'STATE.json').exists() else 'STARTING'},ensure_ascii=False))
+
 if __name__=='__main__':
  action=sys.argv[1] if len(sys.argv)>1 else 'status'
  if action=='start':start('--verify' in sys.argv)
- elif action=='_run':run(Path(sys.argv[2]),bool(int(sys.argv[3])))
- elif action in ['status','stop']:
-  a=read(S/'runtime/ACTIVE.json');alive=same_process(a['owner'])
-  if action=='stop' and alive:(Path(a['run'])/'STOP_REQUESTED').write_text('User/QA requested owned shutdown\n')
-  print(json.dumps({'ownerAlive':alive,'run':a['run'],'state':read(Path(a['run'])/'STATE.json') if (Path(a['run'])/'STATE.json').exists() else 'STARTING'},ensure_ascii=False))
+ elif action=='_run':run(Path(sys.argv[2]),bool(int(sys.argv[3])),Path(sys.argv[4]))
+ elif action in ['status','stop']:status(action)
  else:raise ValueError('start [--verify], status, stop only')

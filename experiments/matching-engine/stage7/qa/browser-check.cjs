@@ -2,7 +2,8 @@ const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const out = path.join(__dirname,'large-evidence'); fs.mkdirSync(out,{recursive:true});
+const smoke = process.argv.includes('--smoke');
+const out = path.join(__dirname,smoke?'smoke-evidence':'large-evidence'); fs.mkdirSync(out,{recursive:true});
 const checks=[];
 const note=(name,details={})=>checks.push({name,status:'PASS',...details});
 (async()=>{
@@ -55,6 +56,22 @@ const note=(name,details={})=>checks.push({name,status:'PASS',...details});
   assert(compareGeometry.every(b=>b.left>=0&&b.right<=1921&&b.top>=0&&b.bottom<=1081),JSON.stringify(compareGeometry));
   await page.screenshot({path:path.join(out,'comparison.png'),fullPage:false});
   await page.getByRole('button',{name:'Закрыть',exact:true}).click();note('Side-by-side SAFE/REVIEW comparison',{compareGeometry});
+  if(smoke){
+   const sample=JSON.parse(fs.readFileSync(path.join(__dirname,'../src/main/resources/META-INF/resources/example.json'),'utf8'));
+   sample.name='Smoke JSON import';sample.payments=sample.payments.filter(x=>x.fault!=='JDBC_ERROR');
+   await page.locator('input[type=file]').setInputFiles({name:'valid.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(sample))});
+   await state('READY');assert((await page.locator('.dataset-summary').innerText()).includes(sample.name));
+   await page.getByRole('button',{name:'Запустить сопоставление',exact:true}).click();await state('COMPLETE');
+   await metrics({'Обработано':6,'SAFE':1,'REVIEW':4,'NO_CONTRACT':1,'Технические ошибки':0});
+   note('Valid JSON import and real engine run',{payments:6});
+   await page.locator('input[type=file]').setInputFiles({name:'invalid.json',mimeType:'application/json',buffer:Buffer.from('{}')});
+   await page.locator('#input-error').filter({hasText:/./}).waitFor();
+   assert((await page.locator('.dataset-summary').innerText()).includes(sample.name));
+   await metrics({'Обработано':6});note('Invalid JSON rejected without losing results');
+   assert.equal(errors.length,0,JSON.stringify(errors));
+   fs.writeFileSync(path.join(out,'BROWSER_RESULT.json'),JSON.stringify({status:'PASS',browser:await browser.version(),checks,errors},null,2));
+   console.log(JSON.stringify({status:'PASS',mode:'smoke',checks:checks.length,browser:await browser.version()}));return;
+  }
   await choose('Статус','TECHNICAL_ERROR');await page.waitForTimeout(400);
   await page.getByRole('button',{name:'Подробнее',exact:true}).click();
   assert((await page.locator('.payment-detail').innerText()).includes('намеренно вызывает SQLException'));

@@ -1,6 +1,6 @@
 # Stage7 - Interactive Matching Engine Demo
 
-После чистого clone сначала выполнить `python -X utf8 -B experiments/matching-engine/maintenance/build_accepted.py` из корня. JAR не хранится в Git: сборка восстанавливает97 Maven-классов и11 принятых исторических CLI-классов из9 source-файлов, проверяя все108 классов и содержимое всех120 ZIP entries. Launcher принимает исходный accepted JAR либо его полную content-identical сборку с отличающимися ZIP timestamps/compression; добавленные/изменённые entries запрещены. Исторические freeze/SHA не переписываются. Подробности обслуживания приведены в [инструкции сборки](../maintenance/FINAL_MAINTENANCE.md).
+После чистого clone достаточно выполнить `start-demo.ps1 -Verify` из команды ниже. Отсутствующий accepted JAR автоматически восстанавливается через `maintenance/build_accepted.py`; отдельно запускать сборку заранее не требуется. JAR не хранится в Git: сборка восстанавливает97 Maven-классов и11 принятых исторических CLI-классов из9 source-файлов, проверяя все108 классов и содержимое всех120 ZIP entries. Launcher принимает исходный accepted JAR либо его полную content-identical сборку с отличающимися ZIP timestamps/compression; добавленные/изменённые entries запрещены. Исторические freeze/SHA не переписываются. Подробности обслуживания приведены в [инструкции сборки](../maintenance/FINAL_MAINTENANCE.md).
 
 ## Обновление 2026-11-05: большие наборы и очистка
 
@@ -29,9 +29,9 @@ python -X utf8 -B experiments/matching-engine/stage7/demo_runtime.py status
 
 Ключ -Verify выполняет новые unit/integration tests на собственном сервере перед запуском UI. Без него выполняется только сборка. Первый запуск скачивает открытые Maven/npm зависимости; matching выполняется локально без облака/AI. Используются бесплатные vaadin-core компоненты.
 
-Адрес: **http://localhost:8087**. Дождаться фазы READY; frontend Vaadin при первой сборке может собираться несколько минут. Владелец процесса, журналы и checkpoint сохраняются в runtime/demo-*/STATE.json; приватные конфиги и секреты не публиковать. Процессы finite: через2 часа после READY стенд завершится. Не запускать параллельные копии.
+Адрес: **http://localhost:8087**. Дождаться фазы READY; frontend Vaadin при первой сборке может собираться несколько минут. Владелец процесса, журналы и checkpoint сохраняются в runtime/demo-*/STATE.json; приватные конфиги и секреты не публиковать. Процессы finite: через2 часа после READY стенд завершится. Повторная команда запуска возвращает существующий собственный экземпляр. До первого запуска status/stop завершаются успешно с NOT_STARTED, runtime создаётся автоматически.
 
-MySQL8.4.8 по умолчанию берётся из сохранённого experimental runtime stage4cd. При переносе можно указать STAGE7_MYSQL_HOME - каталог установки MySQL8.4.8. Используются только binaries, отдельный НОВЫЙ datadir и порт33357; production service/config/datadir не используются. При занятом8087/33357 запуск откажет, чужие процессы не завершаются.
+MySQL 8.4.8 выбирается из необязательного STAGE7_MYSQL_HOME, подходящей установки в PATH либо автоматически загружается из [официального архива Oracle](https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.8-winx64.zip). ZIP проверяется по закреплённому SHA256 `53685bb61a1efc5ecc1b35c1b6bd0d30ba799f4943a1ef2c34df464f5a774c7f` перед распаковкой. Архив и установка кэшируются в runtime/dependencies, повторное скачивание не требуется. Используются только binaries, отдельный НОВЫЙ datadir и порт33357; production service/config/datadir не используются. Службы Windows и PATH не изменяются. При занятом8087/33357 запуск откажет, чужие процессы не завершаются.
 
 Остановка одной командой:
 
@@ -70,11 +70,11 @@ DemoView - UI; DataImport - строгий адаптер; DemoRuns - один �
 
 UI-only UiParts/AppPagination и кнопочные CSS/цветовые tokens взяты из текущего Alpha Matcher как отдельные source snapshots: main app нельзя подключить зависимостью без его routes/config. Логотип использует существующий Angry. Основной текст использует Inter/Arial stack без внешнего Google Fonts запроса; при отсутствии установленного Inter используется Arial. zoom0.8 сохранён, обе темы поддерживаются.
 
-Автоматические тесты новой логики: DataImportTest и DemoIntegrationTest. Последний активен только под owned launcher -Verify. Браузерная проверка (тестовая dev-зависимость Playwright, существующий Chrome):
+Автоматические тесты новой логики: DataImportTest и DemoIntegrationTest. Последний активен только под owned launcher -Verify. Компактная браузерная проверка BASE7, details/evidence, фильтра, сравнения и JSON import (тестовая dev-зависимость Playwright, существующий Chrome). Без --smoke исторический сценарий дополнительно запускает 10k, для обычной проверки его не использовать:
 
 ```powershell
 npm install --prefix experiments/matching-engine/stage7/qa
-node experiments/matching-engine/stage7/qa/browser-check.cjs
+node experiments/matching-engine/stage7/qa/browser-check.cjs --smoke
 ```
 
 Приведённые команды запускают проверки, а их фактические результаты нужно читать в журналах конкретного запуска. Наличие инструкции само по себе не подтверждает успешную проверку.

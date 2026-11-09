@@ -65,18 +65,20 @@ $env:SPRING_PROFILES_ACTIVE = 'demo'
 
 ## Запуск Stage 7
 
-Подготовьте отдельную установку MySQL 8.4.8. `STAGE7_MYSQL_HOME` указывает на каталог, содержащий `bin/mysqld.exe`. Из корня репозитория:
+Из корня репозитория с JDK 25 в `JAVA_HOME`, Python 3 и Node.js/npm:
 
 ```powershell
-$env:STAGE7_MYSQL_HOME = 'C:\tools\mysql-8.4.8-winx64'
-python -X utf8 -B experiments/matching-engine/maintenance/build_accepted.py
-.\experiments\matching-engine\stage7\start-demo.ps1
+.\experiments\matching-engine\stage7\start-demo.ps1 -Verify
 python -X utf8 -B experiments/matching-engine/stage7/demo_runtime.py status
 ```
 
-Сборка движка восстанавливает и проверяет все 108 accepted classes, включая исторические CLI-классы. Maven/npm скачивают зависимости при необходимости. После состояния `READY` интерфейс доступен на `http://localhost:8087`.
+Launcher создаёт runtime-каталоги, при отсутствии accepted JAR восстанавливает его штатной сборкой и проверяет fingerprints всех 108 accepted classes. Для MySQL 8.4.8 используется `STAGE7_MYSQL_HOME`, подходящая установка в PATH либо автоматическая загрузка официального Windows ZIP Oracle по HTTPS с закреплённым SHA256. Автоматическая установка хранится в `stage7/runtime/dependencies/`. Системные службы и PATH не изменяются.
 
-Launcher создаёт отдельный MySQL datadir, случайные локальные пароли и каталог `matching_engine_exp` на порту `33357`. Порты `8087` и `33357` должны быть свободны. Стенд ограничен по времени работы и рассчитан на одного локального демонстратора. Параллельные копии запускать не следует.
+`STAGE7_MYSQL_HOME` необязателен. Он позволяет явно указать каталог существующей MySQL 8.4.8, содержащий `bin/mysqld.exe`. При неверной версии или неполной установке запуск сообщит об ошибке.
+
+Первое восстановление accepted JAR включает его unit-тесты. Ключ `-Verify` дополнительно запускает стандартные тесты Stage 7 на собственном MySQL. Большие проверки отдельно не включаются. Maven/npm скачивают зависимости при необходимости. После состояния `READY` интерфейс доступен на `http://localhost:8087`. До первого запуска `status` и `stop` возвращают `NOT_STARTED`.
+
+Launcher создаёт отдельный datadir, случайные локальные пароли и каталог `matching_engine_exp` на порту `33357`. Порты `8087` и `33357` должны быть свободны. Стенд ограничен по времени работы и рассчитан на одного локального демонстратора. Повторный запуск возвращает уже работающий собственный экземпляр.
 
 Штатная остановка:
 
