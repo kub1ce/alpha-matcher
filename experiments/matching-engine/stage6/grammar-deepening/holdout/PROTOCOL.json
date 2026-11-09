@@ -1,0 +1,10 @@
+{
+  "kind": "NEW_PROSPECTIVE_SYNTHETIC_HOLDOUT",
+  "humanExpertOracle": false,
+  "externalBlindValidation": false,
+  "oracleIndependentOfEngineOutput": true,
+  "createdBeforeNewSemanticRuns": true,
+  "policy": "One fixed opening after development; no tuning on outcomes. Unexpected SAFE blocks. Preserve first output; repairs require new validation. JDBC exception/transaction failure also checked by original integration tests.",
+  "cases": 34,
+  "world": "Original fictional fixtures, contract101 renamed HLD-941; each scenario SQL change rolled back. Modes explicitly declare duplicates/parties/row-limit; no inferred identity by INN."
+}

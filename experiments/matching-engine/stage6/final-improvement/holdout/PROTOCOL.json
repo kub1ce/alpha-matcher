@@ -1,0 +1,12 @@
+{
+  "kind": "NEW_AUTHORED_SYNTHETIC_FIRST_EVALUATION",
+  "cases": 424,
+  "seed": 99487215,
+  "enginePredictionsUsed": false,
+  "humanExpert": false,
+  "tuningAfterOpeningProhibited": true,
+  "strictSafeRequiresCorrectContract": true,
+  "priorHoldouts": "48/316/684/628 are known regression only",
+  "bareWorldSafe": "Author knows assigned obligation; runtime may conservatively abstain",
+  "limitations": "Same model authors protocol/code; not blinded human expert or real-bank validation"
+}

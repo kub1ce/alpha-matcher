@@ -1,0 +1,15 @@
+{
+  "sources": {
+    "parallel/CatalogProbeMain.java": "78e12e2791e182a07ba6e721a438942010caf90b13573a50bd18f26c8c0fa081",
+    "stage4batch/CpuBatchMain.java": "b0f5ca7212e70e80d4de471c1397aa3ca271e9b492539bcf07ce4b66217f039b",
+    "stage4/ParserABMain.java": "c89bc66de9143c1508ad3b10f9560ff3bf13891e35a11cfb2f053162ac851944",
+    "parallel/ReferenceLookupMain.java": "c768c5c4fa0903b727b224c5731ce44f4532e40d77a84362009f3c7b9ca3b92a",
+    "stage4batch/Stage4BatchQualityMain.java": "6db9017745b84b81efbc9c378197ebc5888ab7e68aeb661bc1be5e2dfc48e342",
+    "stage4b/Stage4BParserABMain.java": "db9a329d9d5fd0bc917ecffb76009b9177ed7169a9efc7529eb5e2290d3cbc82",
+    "stage4b/Stage4BQualityMain.java": "0b0a33f21729e90c814f9e59b76bf9d797c6b6dec7e6f769d62acf45fa8a6a23",
+    "stage4/Stage4QualityMain.java": "425ba6fffc685f617a25e27c2a382c71fc2513eb1ed478c73938ad938a9a9566",
+    "stage4batch/StreamingProbeMain.java": "8f5aae94c4c491be8e5e10fd6a04eb8bcaced889311d89a9365f9b78f9368104"
+  },
+  "compile": "javac -encoding UTF-8 -cp classes -d classes (default debug settings)",
+  "acceptedClasses": 108
+}

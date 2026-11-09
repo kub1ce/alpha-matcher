@@ -1,0 +1,2 @@
+# Frozen SHA manifests require byte-preserving checkout on Windows as well as Unix.
+* -text

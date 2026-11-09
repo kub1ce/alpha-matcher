@@ -1,0 +1,21 @@
+operationId,expectedStatus,expectedContract,scenario
+1,SAFE,101,explicit number and consistent parties
+2,REVIEW,-,duplicate contract number
+3,NO_CONTRACT,-,explicit number not found
+4,REVIEW,-,invalid purpose INN
+5,REVIEW,-,payer and recipient reversed
+6,REVIEW,-,purpose INN conflicts with operation
+7,REVIEW,-,third party payment
+8,REVIEW,-,INN search without explicit number
+9,REVIEW,-,no supported identifiers
+10,SKIPPED,-,already linked
+11,SKIPPED,-,rejected operation
+12,REVIEW,-,recipient INN missing
+13,SAFE,105,external parties without client links
+14,REVIEW,-,different beneficiary
+15,REVIEW,-,contract party INN conflicts with client
+16,SAFE,108,valid twelve digit INN
+17,REVIEW,-,multiple explicit contract numbers
+18,REVIEW,-,operation party INN conflicts with client
+19,SAFE,109,contract date is not expiry date
+20,SKIPPED,-,processed operation without link

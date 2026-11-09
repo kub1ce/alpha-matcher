@@ -1,0 +1,27 @@
+{
+  "cases": 316,
+  "families": [
+    "ambiguous-capital-object",
+    "calendar-nonexclusive",
+    "calendar-object",
+    "calendar-with-conflict",
+    "combined-negative",
+    "existing-service",
+    "identity-cross-check",
+    "marked-letter-code",
+    "period-like-person",
+    "person-not-object",
+    "service-incomplete-search",
+    "technical-failure",
+    "unmarked-word",
+    "unsupported-benign-object",
+    "work-nominalization",
+    "work-with-hazard"
+  ],
+  "humanExpertOracle": false,
+  "productionData": false,
+  "oracleFromEngine": false,
+  "newProspective": true,
+  "freezeBeforeDevelopment": true,
+  "policy": "First predictions immutable. No tuning on holdout. Missed expected SAFE remains a metric; wrong SAFE blocks acceptance. Old48 are known regression. Fixture tax/client-type limitations inherited and disclosed."
+}

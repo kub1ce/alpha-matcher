@@ -1,0 +1,24 @@
+name: alpha-matcher-sql-profile
+services:
+  mysql:
+    image: mysql:8.4.8@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--performance-schema=ON"]
+    environment:
+      MYSQL_DATABASE: matching_engine_exp
+      MYSQL_USER: matcher
+      MYSQL_PASSWORD: ${MATCHING_DB_PASSWORD:?Use Run-SqlProfile.ps1}
+      MYSQL_ROOT_PASSWORD: ${MATCHING_PROFILE_ROOT_PASSWORD:?Use Run-SqlProfile.ps1}
+    ports:
+      - "127.0.0.1:33078:3306"
+    tmpfs:
+      - /var/lib/mysql
+    volumes:
+      - ../sql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ../src/test/resources/fixtures.sql:/docker-entrypoint-initdb.d/002_fixtures.sql:ro
+      - ./profile-grants.sql:/docker-entrypoint-initdb.d/003_profile.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysqladmin --protocol=TCP -h 127.0.0.1 -u matcher ping --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s

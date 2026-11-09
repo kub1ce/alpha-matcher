@@ -1,0 +1,23 @@
+name: alpha-matcher-engine-exp
+services:
+  mysql:
+    image: mysql:8.4.8@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_DATABASE: matching_engine_exp
+      MYSQL_USER: matcher
+      MYSQL_PASSWORD: ${MATCHING_DB_PASSWORD:?Set MATCHING_DB_PASSWORD or use Run-MySqlTests.ps1}
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    ports:
+      - "127.0.0.1:33077:3306"
+    tmpfs:
+      - /var/lib/mysql
+    volumes:
+      - ./sql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./src/test/resources/fixtures.sql:/docker-entrypoint-initdb.d/002_fixtures.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql --protocol=TCP -h 127.0.0.1 -u matcher matching_engine_exp -Nse 'SELECT COUNT(*) FROM operation_status' | grep -qx 3"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 20s

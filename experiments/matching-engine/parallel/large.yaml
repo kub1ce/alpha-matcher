@@ -1,0 +1,8 @@
+# Memory differs deliberately from the historical 1k/10k stand; CPU budget is unchanged.
+services:
+  mysql:
+    mem_limit: 3g
+    tmpfs: ["/var/lib/mysql:size=2147483648"]
+  app:
+    mem_limit: 1536m
+    command: ["java", "-Xms128m", "-Xmx1024m", "-cp", "/work/target/classes:/work/target/dependency/*", "ru.urfu.alphamatcher.experiment.LargeBenchmarkMain"]

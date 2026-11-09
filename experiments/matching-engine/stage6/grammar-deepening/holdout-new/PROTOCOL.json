@@ -1,0 +1,29 @@
+{
+  "cases": 684,
+  "familyCounts": {
+    "action-dependent-phrase": 90,
+    "action-and-independent-hazard": 120,
+    "action-duplicate": 30,
+    "action-unknown-provenance": 30,
+    "action-incomplete": 30,
+    "actor-dependent-counterexample": 60,
+    "explicit-lexical-number": 64,
+    "explicit-reference-conflict": 64,
+    "unmarked-prose": 12,
+    "unmarked-letter-obligation": 8,
+    "unresolved-coordination": 32,
+    "typed-technical-field": 24,
+    "technical-field-with-person": 24,
+    "participant-cross-evidence": 24,
+    "JDBC-and-transaction": 24,
+    "unprocessed-tail": 32,
+    "old-supported-regression": 8,
+    "late-contradiction": 8
+  },
+  "humanExpertOracle": false,
+  "externalBlind": false,
+  "world": "Existing owned fictional fixture plus declared number/identity/conflict modes, rolled back per case",
+  "firstEvaluationAfterDevelopment": true,
+  "noEngineOracle": true,
+  "policy": "No tuning after first opening; preserve wrong SAFE, fix cause and use a new holdout if needed; report missed positives without oracle change; matrix not IID sample."
+}

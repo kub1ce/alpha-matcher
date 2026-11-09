@@ -1,0 +1,28 @@
+{
+  "kind": "NEW_PROSPECTIVE_R2",
+  "cases": 628,
+  "families": {
+    "typed-payment-object": 40,
+    "reference-first-object": 40,
+    "world-state-duplicate": 40,
+    "world-state-conflict": 40,
+    "world-state-missing-party": 40,
+    "world-state-row-limit": 40,
+    "world-state-unknown-search": 40,
+    "independent-hazard": 160,
+    "explicit-number-field": 30,
+    "alternative-reference-field": 30,
+    "bare-letter-world-reference": 10,
+    "ordinary-contract-prose": 8,
+    "actor-or-unknown-dependency": 48,
+    "identity-mode": 24,
+    "technical-fault": 20,
+    "typed-metadata": 5,
+    "metadata-plus-contradiction": 5,
+    "temporal-object": 4,
+    "late-conflict": 4
+  },
+  "humanExpertOracle": false,
+  "engineOutputUsedForLabels": false,
+  "reason": "First684 evaluation retained; acceptance blocked by older v4/v1 SAFE regressions, not wrong SAFE. This separate corpus frozen before correction/re-evaluation. Old684 used only as known regression."
+}

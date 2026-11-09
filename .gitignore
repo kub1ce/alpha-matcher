@@ -41,3 +41,25 @@ src/main/frontend/generated/
 # Another
 docs/design/
 docs/qa/
+# Local instructions, research exports and private configuration
+/docs/report-handoff/
+.env
+.env.*
+!.env.example
+!*.example
+**/private/
+**/runtime/
+**/mysql-data/
+**/target/
+**/node_modules/
+**/__pycache__/
+**/.venv/
+**/site-packages/
+**/.vaadin/
+*.etl
+*.jfr
+*.dmp
+*.tmp
+*.partial
+.DS_Store
+Thumbs.db
