@@ -43,6 +43,7 @@ public class AuditLogView extends Div {
     public AuditLogView(DemoDataService data, DemoReportingService reporting) {
         this.state = data.state();
         this.reporting = reporting;
+        DemoStateUpdates.bind(this, state, this::recheckAccess);
         setClassName("audit-log-page app-page");
         if (!ensureAuditAccess()) return;
         initialize();

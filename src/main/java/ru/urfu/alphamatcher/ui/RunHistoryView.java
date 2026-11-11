@@ -36,6 +36,7 @@ public class RunHistoryView extends Div {
 
     public RunHistoryView(DemoDataService data, DemoReportingService reporting) {
         this.state = data.state();
+        DemoStateUpdates.bind(this, state, this::refresh);
         this.reporting = reporting;
         setClassName("run-history-page app-page");
         search.setPlaceholder("Поиск по ID, инициатору или периоду...");

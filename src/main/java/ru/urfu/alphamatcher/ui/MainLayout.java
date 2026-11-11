@@ -96,6 +96,7 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver, Before
     public MainLayout(DemoDataService data, DemoManualReviewService manualReview) {
         this.data = data;
         this.manualReview = manualReview;
+        DemoStateUpdates.bind(this, data.state(), this::refreshDemoCounts);
         addClassName("main-layout");
         setPrimarySection(Section.NAVBAR);
         Div logo = UiParts.div("header-logo", UiParts.div("small-mark", UiParts.text("small-mark-glyph", "α")),

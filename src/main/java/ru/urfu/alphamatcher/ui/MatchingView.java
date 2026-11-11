@@ -60,6 +60,7 @@ public class MatchingView extends Div implements BeforeEnterObserver {
         this.data = data;
         this.matching = matching;
         this.state = data.state();
+        DemoStateUpdates.bind(this, state, this::refreshBusinessState);
         this.draft = DemoSession.matchingDraft();
         this.pagination = new AppPagination(target -> {
             page = target;
@@ -185,11 +186,23 @@ public class MatchingView extends Div implements BeforeEnterObserver {
         }
     }
 
+    private void refreshBusinessState() {
+        if (preview == null) return;
+        if (preview.fingerprint() != matching.fingerprint(state, preview.from(), preview.to()))
+            refreshFromCurrentState(matching.preview(state, preview.from(), preview.to(),
+                    preview.includeProcessed(), preview.includeManual()));
+        else renderResults();
+    }
+
     private void refreshFromCurrentState() {
+        refreshFromCurrentState(matching.preview(state, from.getValue(), to.getValue(),
+                includeProcessed.getValue(), includeManual.getValue()));
+    }
+
+    private void refreshFromCurrentState(Preview refreshed) {
         Set<String> previousSelection = Set.copyOf(selected);
         int previousPage = page;
-        preview = matching.preview(state, from.getValue(), to.getValue(),
-                includeProcessed.getValue(), includeManual.getValue());
+        preview = refreshed;
         draft.save(preview, currentInitiator());
         selected.addAll(previousSelection);
         draft.retainResults(preview.rows());
@@ -396,6 +409,7 @@ public class MatchingView extends Div implements BeforeEnterObserver {
         if (preview == null || selected.isEmpty() || busy) return;
         if (isStale()) { AppNotifications.warning("Предпросмотр устарел", "Обновите предложения перед массовым действием."); return; }
         Set<String> chosen = Set.copyOf(selected);
+        Preview confirmedPreview = preview;
         long safe = chosen.stream().map(preview::find).filter(p -> p != null && p.status() == Status.SAFE).count();
         long review = chosen.stream().map(preview::find).filter(p -> p != null && p.status() == Status.REVIEW).count();
         long noContract = chosen.stream().map(preview::find).filter(p -> p != null && p.status() == Status.NO_CONTRACT).count();
@@ -430,8 +444,8 @@ public class MatchingView extends Div implements BeforeEnterObserver {
             busy = true;
             updateSelection();
             try {
-                var result = manual ? matching.sendToManual(state, preview, chosen, currentInitiator())
-                        : matching.apply(state, preview, chosen, currentInitiator());
+                var result = manual ? matching.sendToManual(state, confirmedPreview, chosen, currentInitiator())
+                        : matching.apply(state, confirmedPreview, chosen, currentInitiator());
                 dialog.close();
                 AppNotifications.success(manual ? "Передано на ручной разбор" : "Автопривязка выполнена",
                         "Операций: " + (manual ? result.sentManual() : result.applied())

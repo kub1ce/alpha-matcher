@@ -7,7 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Session-scoped UI draft. It contains proposals and selection, never confirmed links. */
+/** UI-scoped draft, retained across navigation in one tab. Never contains confirmed links. */
 public class DemoMatchingDraft implements Serializable {
     private LocalDate from = LocalDate.of(2026, 9, 1);
     private LocalDate to = LocalDate.of(2026, 10, 12);

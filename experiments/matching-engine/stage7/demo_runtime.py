@@ -68,18 +68,39 @@ def prepare_mysql():
  return checked_mysql(home)
 def verify_engine():
  f=read(M/'stage6/final-acceptance/ENGINE_FREEZE.json')
- assert f['version']=='stage6-accepted-1ebb240ff4bc'
- for name,h in f['mainSourceSHA256'].items():assert digest(M/name)==h,name
+ if f['version']!='stage6-accepted-1ebb240ff4bc':raise RuntimeError('Unexpected accepted engine version')
+ for name,h in f['mainSourceSHA256'].items():
+  if digest(M/name)!=h:raise RuntimeError('Accepted source SHA256 mismatch: '+name)
  artifact=M/'target/matching-engine-0.1-SNAPSHOT.jar'
  if digest(artifact)!=f['jarSHA256']:
   # Maven ZIP timestamps/compression can differ after a clean source rebuild.
   # Require byte-identical CONTENT of every accepted entry, no additions or duplicates.
   content=read(M/'maintenance/ACCEPTED_JAR_CONTENT_SHA256.json')
-  assert content['originalJarSHA256']==f['jarSHA256']
+  if content['originalJarSHA256']!=f['jarSHA256']:raise RuntimeError('Accepted JAR manifest does not match freeze')
   with zipfile.ZipFile(artifact) as jar:
-   entries=jar.infolist();assert len(entries)==len({e.filename for e in entries}),'Duplicate JAR entries'
-   assert {e.filename:hashlib.sha256(jar.read(e)).hexdigest() for e in entries}==content['entries'],'Accepted JAR contents changed'
+   entries=jar.infolist()
+   if len(entries)!=len({e.filename for e in entries}):raise RuntimeError('Duplicate JAR entries')
+   if {e.filename:hashlib.sha256(jar.read(e)).hexdigest() for e in entries}!=content['entries']:raise RuntimeError('Accepted JAR contents changed')
  return f
+
+def start_owned(args,log_path,job,env=None):
+ with Path(log_path).open('xb') as log:
+  p=subprocess.Popen(args,env=env,cwd=S,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW)
+  try:job.add(p)
+  except BaseException as failure:
+   try:
+    if p.poll() is None:
+     try:
+      p.terminate();p.wait(timeout=10)
+     except (OSError,subprocess.TimeoutExpired):
+      if p.poll() is None:p.kill()
+      p.wait(timeout=30)
+    else:p.wait(timeout=30)
+   except BaseException as cleanup:
+    failure.add_note(f'Could not confirm shutdown of created child PID {p.pid}: {cleanup!r}')
+   raise
+ return p
+
 class Job:
  def __init__(self):
   k=C.WinDLL('kernel32',use_last_error=True);self.k=k
@@ -99,7 +120,7 @@ def run(root,verify,mysql_home):
  def save(phase,**data):
   state.update(phase=phase,utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),**data);write(root/'STATE.json',state);write(S/'STATE.json',{'status':'STAGE7_IN_PROGRESS','phase':phase,'run':str(root),'owner':state['owner']})
  def start(args,name,env=None):
-  log=(root/(name+'.log')).open('xb');p=subprocess.Popen(args,env=env,cwd=S,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW);log.close();job.add(p);return p
+  return start_owned(args,root/(name+'.log'),job,env)
  try:
   verify_engine()
   for port in [PORT,HTTP]:
@@ -110,7 +131,8 @@ def run(root,verify,mysql_home):
   private=root/'private';private.mkdir();data=root/'mysql-data';data.mkdir()
   password=secrets.token_urlsafe(32);writerpass=secrets.token_urlsafe(32);rootpass=secrets.token_urlsafe(32);token=secrets.token_urlsafe(32)
   cnf=private/'server.cnf';cnf.write_text('[mysqld]\nbasedir='+mysql.parents[1].as_posix()+'\ndatadir='+data.as_posix()+'\nport='+str(PORT)+'\nbind-address=127.0.0.1\nmysqlx=OFF\nskip-name-resolve=ON\ninnodb-buffer-pool-size=134217728\nmax-connections=24\nlocal-infile=OFF\ncharacter-set-server=utf8mb4\ncollation-server=utf8mb4_unicode_ci\n',encoding='utf-8')
-  init=start([str(mysql),'--defaults-file='+str(cnf),'--initialize-insecure'],'mysql-initialize');assert init.wait(timeout=180)==0
+  init=start([str(mysql),'--defaults-file='+str(cnf),'--initialize-insecure'],'mysql-initialize')
+  if init.wait(timeout=180)!=0:raise RuntimeError('Owned MySQL initialization failed; see mysql-initialize.log')
   bootstrap=private/'bootstrap.sql';bootstrap.write_text("ALTER USER 'root'@'localhost' IDENTIFIED BY '"+rootpass+"';\nCREATE DATABASE matching_engine_exp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\nCREATE USER 'stage7_setup'@'127.0.0.1' IDENTIFIED BY '"+rootpass+"';\nGRANT ALL ON matching_engine_exp.* TO 'stage7_setup'@'127.0.0.1';\nGRANT SHUTDOWN ON *.* TO 'stage7_setup'@'127.0.0.1';\nCREATE USER 'stage7_reader'@'127.0.0.1' IDENTIFIED BY '"+password+"';\nCREATE USER 'stage7_writer'@'127.0.0.1' IDENTIFIED BY '"+writerpass+"';\nGRANT SELECT ON matching_engine_exp.* TO 'stage7_reader'@'127.0.0.1';\nGRANT SELECT,INSERT,UPDATE,DELETE ON matching_engine_exp.* TO 'stage7_writer'@'127.0.0.1';\n",encoding='utf-8')
   server=start([str(mysql),'--defaults-file='+str(cnf),'--console','--init-file='+str(bootstrap)],'mysql-server');save('INITIALIZING_MYSQL',mysqlLauncher=own_info(server.pid))
   end=time.monotonic()+120
@@ -123,14 +145,16 @@ def run(root,verify,mysql_home):
     time.sleep(.5)
   clientcnf=private/'client.cnf';clientcnf.write_text('[client]\nuser=stage7_setup\npassword='+rootpass+'\nhost=127.0.0.1\nport='+str(PORT)+'\nprotocol=TCP\n',encoding='utf-8')
   schema=(M/'sql/001_schema.sql').read_bytes()+b'\nCREATE INDEX s5b_h01_party_name_contract ON contract_party(name,contract_id);\n'
-  q=subprocess.run([str(mysql.with_name('mysql.exe')),'--defaults-file='+str(clientcnf),'--default-character-set=utf8mb4','--get-server-public-key','--host=127.0.0.1','--port='+str(PORT),'--user=stage7_setup','--protocol=TCP'],input=schema,capture_output=True,timeout=90);(root/'schema-load.log').write_bytes(q.stdout+q.stderr);assert q.returncode==0,'Owned schema initialization failed; see schema-load.log'
+  q=subprocess.run([str(mysql.with_name('mysql.exe')),'--defaults-file='+str(clientcnf),'--default-character-set=utf8mb4','--get-server-public-key','--host=127.0.0.1','--port='+str(PORT),'--user=stage7_setup','--protocol=TCP'],input=schema,capture_output=True,timeout=90);(root/'schema-load.log').write_bytes(q.stdout+q.stderr)
+  if q.returncode!=0:raise RuntimeError('Owned schema initialization failed; see schema-load.log')
   uuid=next(x.split('=',1)[1].strip() for x in (data/'auto.cnf').read_text().splitlines() if x.strip().startswith('server-uuid='))
   write(root/'ownership.json',{'owner':own_info(),'datadir':str(data),'port':PORT,'serverUUID':uuid,'catalog':'matching_engine_exp','freshOwnedDirectory':True})
   env=os.environ.copy();env.update(MATCHING_DB_URL=f'jdbc:mysql://127.0.0.1:{PORT}/matching_engine_exp?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&connectTimeout=5000&socketTimeout=15000',MATCHING_DB_USER='stage7_reader',MATCHING_DB_PASSWORD=password,STAGE7_WRITER_USER='stage7_writer',STAGE7_WRITER_PASSWORD=writerpass,STAGE7_RUN_DIR=str(root),STAGE7_DB_PORT=str(PORT),STAGE7_SERVER_UUID=uuid,STAGE7_LIFECYCLE_TOKEN=token,MAVEN_OPTS='-Xmx512m')
   if os.environ.get('STAGE7_LARGE_VERIFY')=='1':env['MAVEN_OPTS']='-Xmx768m'
   command=[str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-ExecutionPolicy','Bypass','-File',str(S/'build-demo.ps1')]
   if verify:command+=['-Verify']
-  save('BUILD_AND_TEST' if verify else 'BUILD');q=start(command,'build-test',env);assert q.wait(timeout=900)==0,'Build/test failed; raw log retained'
+  save('BUILD_AND_TEST' if verify else 'BUILD');q=start(command,'build-test',env)
+  if q.wait(timeout=900)!=0:raise RuntimeError('Build/test failed; raw log retained')
   app=start([str(Path(env['JAVA_HOME'])/'bin/java.exe'),'-Xms128m','-Xmx768m','-jar',str(S/'target/matching-engine-demo-0.1-SNAPSHOT.jar')],'application',env);save('WAITING_UI',app=own_info(app.pid))
   req=urllib.request.Request(f'http://127.0.0.1:{HTTP}/internal/health',headers={'X-Stage7-Token':token})
   end=time.monotonic()+600

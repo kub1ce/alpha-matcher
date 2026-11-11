@@ -37,6 +37,7 @@ public class ContractsView extends Div {
         this.data = data;
         this.contracts = contracts;
         this.state = data.state();
+        DemoStateUpdates.bind(this, state, this::refresh);
         setClassName("contracts-page app-page");
         search.setPlaceholder("Поиск по номеру договора, стороне или ИНН...");
         search.setAriaLabel("Поиск договоров");

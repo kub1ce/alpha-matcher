@@ -44,6 +44,20 @@ public class DemoOperationState implements Serializable {
     private long nextRunNumber;
     private boolean idsNormalized;
     private long revision;
+    private transient java.util.concurrent.CopyOnWriteArrayList<Runnable> changeListeners;
+
+    /** Listeners only enqueue UI work; business mutations never wait for a UI lock. */
+    public synchronized com.vaadin.flow.shared.Registration onChange(Runnable listener) {
+        if (changeListeners == null) changeListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+        changeListeners.add(listener);
+        var registered = changeListeners;
+        return () -> registered.remove(listener);
+    }
+
+    private void changed() {
+        revision++;
+        if (changeListeners != null) for (Runnable listener : changeListeners) listener.run();
+    }
 
     public DemoOperationState(List<Operation> operations) {
         this.operations = new ArrayList<>(operations);
@@ -58,18 +72,18 @@ public class DemoOperationState implements Serializable {
     }
 
     /** Extend an existing session without replacing its confirmed links, queue, runs or audit. */
-    public void mergeSeedOperations(List<Operation> seed) {
+    public synchronized void mergeSeedOperations(List<Operation> seed) {
         Set<String> present = new LinkedHashSet<>();
         for (Operation operation : operations) present.add(operation.id());
         for (Operation operation : seed) if (present.add(operation.id())) {
             operations.add(operation);
             seedState(operation);
-            revision++;
+            changed();
         }
     }
 
     public List<Operation> all() { return List.copyOf(operations); }
-    public long revision() { return revision; }
+    public synchronized long revision() { return revision; }
     public boolean isManualQueued(String id) { return manualQueue.contains(id) && !isLinked(id); }
     public String manualReason(String id) { return manualReasons.get(id); }
     public List<BatchRun> batchRuns() { normalizeLegacyIds(); return List.copyOf(batchRuns); }
@@ -79,12 +93,13 @@ public class DemoOperationState implements Serializable {
         return auditEvents().stream().filter(event -> operationId.equals(event.operationId())).toList();
     }
     public String nextRunId() { normalizeLegacyIds(); return "RUN-%03d".formatted(++nextRunNumber); }
-    public void recordRun(BatchRun run) {
+    public synchronized void recordRun(BatchRun run) {
         normalizeLegacyIds();
         if (batchRuns.stream().anyMatch(existing -> existing.id().equals(run.id())))
             throw new IllegalArgumentException("Запуск с таким ID уже существует");
         batchRuns.add(run);
         if (run.id().startsWith("RUN-DEMO-")) idsNormalized = false;
+        changed();
     }
     /** Upgrade IDs in an existing session, preserving canonical IDs and audit references. */
     private void normalizeLegacyIds() {
@@ -150,13 +165,13 @@ public class DemoOperationState implements Serializable {
                 now(), operationId, action, previous, current, actor, method, runId,
                 justification, automaticReason, reviewReason, previousJustification, previousState));
     }
-    public boolean addOperations(List<Operation> batch) {
+    public synchronized boolean addOperations(List<Operation> batch) {
         Set<String> ids = new LinkedHashSet<>();
         for (Operation operation : batch) {
             if (operation(operation.id()) != null || !ids.add(operation.id())) return false;
         }
         operations.addAll(batch);
-        if (!batch.isEmpty()) revision++;
+        if (!batch.isEmpty()) changed();
         return true;
     }
     public boolean queueForManual(String id) {
@@ -165,7 +180,7 @@ public class DemoOperationState implements Serializable {
     public boolean queueForManual(String id, String reason) {
         return queueForManual(id, reason, currentActor(), null);
     }
-    public boolean queueForManual(String id, String reason, String actor, String runId) {
+    public synchronized boolean queueForManual(String id, String reason, String actor, String runId) {
         DemoPermissions.requireCurrentIfPresent(DemoPermissions.Action.QUEUE_MANUAL);
         actor = DemoPermissions.currentActorOr(actor);
         if (operation(id) == null) throw new IllegalArgumentException("Неизвестная операция");
@@ -173,16 +188,16 @@ public class DemoOperationState implements Serializable {
         boolean added = manualQueue.add(id);
         if (added) {
             manualReasons.put(id, reason);
-            revision++;
             audit(id, "Постановка на ручной разбор", "Без привязки", "Ручной разбор",
                     actor, "Вручную", runId, "", "", reason, "", "Не обработана");
+            changed();
         }
         return added;
     }
     public Operation operation(String id) {
         return operations.stream().filter(op -> op.id().equals(id)).findFirst().orElse(null);
     }
-    public Match match(String id) { return matches.get(id); }
+    public synchronized Match match(String id) { return matches.get(id); }
     public String previousContract(String id) { return previousContracts.get(id); }
     public boolean isLinked(String id) { return matches.containsKey(id); }
     public int linkedCount() { return matches.size(); }
@@ -215,7 +230,7 @@ public class DemoOperationState implements Serializable {
                      List<DemoDataService.Contract> contracts, String justification) {
         link(operationId, contractId, method, contracts, justification, currentActor(), null);
     }
-    public void link(String operationId, String contractId, String method,
+    public synchronized void link(String operationId, String contractId, String method,
                      List<DemoDataService.Contract> contracts, String justification,
                      String actor, String runId) {
         DemoPermissions.requireCurrentIfPresent(matches.containsKey(operationId)
@@ -261,7 +276,6 @@ public class DemoOperationState implements Serializable {
         previousContracts.remove(operationId);
         manualQueue.remove(operationId);
         manualReasons.remove(operationId);
-        revision++;
         audit(operationId, previous == null
                         ? ("Автоматически".equals(method) ? "Автоматическая привязка" : "Ручная привязка")
                         : "Изменение договора",
@@ -271,11 +285,31 @@ public class DemoOperationState implements Serializable {
                 previous == null ? "" : previous.justification(),
                 previous == null ? (queued ? "Ожидала ручного разбора" : "Не обработана")
                         : "Обработана (" + previous.method() + ")");
+        changed();
     }
     public void unlink(String operationId) {
         unlink(operationId, currentActor());
     }
-    public void unlink(String operationId, String actor) {
+    /** Compare the complete decision shown by the dialog and mutate under the same lock. */
+    public synchronized void changeLinkIfUnchanged(String operationId, Match expected, String contractId,
+                                                  List<DemoDataService.Contract> contracts, String justification) {
+        DemoPermissions.requireCurrentIfPresent(DemoPermissions.Action.CHANGE_LINK);
+        requireExpectedMatch(operationId, expected);
+        link(operationId, contractId, "Вручную", contracts, justification);
+    }
+
+    public synchronized void unlinkIfUnchanged(String operationId, Match expected) {
+        DemoPermissions.requireCurrentIfPresent(DemoPermissions.Action.UNLINK);
+        requireExpectedMatch(operationId, expected);
+        unlink(operationId);
+    }
+
+    private void requireExpectedMatch(String operationId, Match expected) {
+        if (expected == null || !expected.equals(matches.get(operationId)))
+            throw new IllegalStateException("Подтверждение устарело: привязка операции изменилась. Проверьте текущий договор и повторите действие.");
+    }
+
+    public synchronized void unlink(String operationId, String actor) {
         DemoPermissions.requireCurrentIfPresent(DemoPermissions.Action.UNLINK);
         actor = DemoPermissions.currentActorOr(actor);
         if (operation(operationId) == null) throw new IllegalArgumentException("Неизвестная операция");
@@ -284,11 +318,11 @@ public class DemoOperationState implements Serializable {
             previousContracts.put(operationId, removed.contractId());
             manualQueue.add(operationId);
             manualReasons.put(operationId, "Договор отвязан сотрудником");
-            revision++;
             audit(operationId, "Отвязка договора", removed.contractId(),
                     "Нет договора (ручной разбор)", actor, "Вручную", null,
                     "", "", removed.reviewReason(), removed.justification(),
                     "Обработана (" + removed.method() + ")");
+            changed();
         }
     }
 

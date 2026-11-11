@@ -13,6 +13,12 @@ import ru.urfu.alphamatcher.demo.DemoReportingService.Statistics;
 public class StatisticsView extends Div {
     public StatisticsView(DemoDataService data, DemoReportingService reporting) {
         setClassName("statistics-page app-page");
+        DemoStateUpdates.bind(this, data.state(), () -> refresh(data, reporting));
+        refresh(data, reporting);
+    }
+
+    private void refresh(DemoDataService data, DemoReportingService reporting) {
+        removeAll();
         Statistics stats = reporting.statistics(data.state());
         add(UiParts.div("registry-filters report-intro",
                 UiParts.text("registry-title", "Аналитическая статистика сопоставления"),

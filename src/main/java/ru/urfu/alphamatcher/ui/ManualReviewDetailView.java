@@ -41,6 +41,7 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
         this.data = data;
         this.review = review;
         this.state = data.state();
+        DemoStateUpdates.bind(this, state, this::refreshPermissions);
         this.demoMode = environment.acceptsProfiles(Profiles.of("demo"));
         setClassName("manual-detail-page app-page");
     }

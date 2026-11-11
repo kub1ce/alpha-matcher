@@ -52,6 +52,7 @@ public class OperationsView extends Div {
     public OperationsView(DemoDataService data) {
         this.data = data;
         state = data.state();
+        DemoStateUpdates.bind(this, state, this::refresh);
         RegistryState current = (RegistryState) VaadinSession.getCurrent().getAttribute(SESSION_KEY);
         if (current == null) {
             current = new RegistryState();

@@ -130,6 +130,22 @@ class DemoPermissionsTest {
     }
 
     @Test
+    void guardedConfirmationsRecheckPermissionsBeforeMutation() {
+        as(DemoRole.DECISION_MAKER);
+        String id = "PAY-2026-000184";
+        var expected = state.match(id);
+        DemoSession.login(DemoRole.OPERATIONS);
+        assertThrows(IllegalStateException.class, () -> state.unlinkIfUnchanged(id, expected));
+        assertThrows(IllegalStateException.class, () -> state.changeLinkIfUnchanged(
+                id, expected, "AG-2026-021", data.contracts(), "Проверены документы"));
+        assertEquals(expected, state.match(id));
+        assertTrue(state.auditEvents().isEmpty());
+        DemoSession.login(DemoRole.DECISION_MAKER);
+        state.changeLinkIfUnchanged(id, expected, "AG-2026-021", data.contracts(), "Проверены документы");
+        assertEquals(DemoUser.ROZHKOV.fullName(), state.match(id).actor());
+    }
+
+    @Test
     void switchingUsersDoesNotRewriteHistoricalAuthors() {
         as(DemoRole.DECISION_MAKER);
         review.confirm("PAY-2026-000185", "AG-2026-031", "Подтверждены сведения о плательщике", true, state);

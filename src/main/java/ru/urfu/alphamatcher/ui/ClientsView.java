@@ -53,6 +53,7 @@ public class ClientsView extends Div {
         this.data = data;
         this.clients = clients;
         this.state = data.state();
+        DemoStateUpdates.bind(this, state, this::refresh);
         RegistryState current = (RegistryState) VaadinSession.getCurrent().getAttribute(SESSION_KEY);
         if (current == null) {
             current = new RegistryState();

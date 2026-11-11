@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import ru.urfu.alphamatcher.experiment.Inn;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.core.StreamReadFeature;
 
 /** Strict JSON adapter, not a parser of payment semantics. Raw purpose is retained. */
 public final class DataImport {
@@ -22,6 +23,8 @@ public final class DataImport {
         }
     }
     private static final JsonMapper JSON=JsonMapper.builder()
+            .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+            .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
     public static Dataset parse(byte[] bytes){

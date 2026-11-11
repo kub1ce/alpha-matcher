@@ -33,6 +33,7 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
     public OperationDetailView(DemoDataService data, Environment environment) {
         this.data = data;
         state = data.state();
+        DemoStateUpdates.bind(this, state, this::refreshPermissions);
         demoMode = environment.acceptsProfiles(Profiles.of("demo"));
         setClassName("operation-detail-page app-page");
     }
@@ -46,7 +47,7 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
         render();
     }
 
-    void refreshPermissions() { render(); }
+    void refreshPermissions() { if (operation != null) render(); }
 
     private void render() {
         removeAll();
@@ -212,6 +213,12 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
     private void changeContract() {
         if (!demoWritable()) return;
         if (!allowed(Action.CHANGE_LINK)) return;
+        DemoOperationState.Match expected = state.match(operation.id());
+        if (expected == null) {
+            render();
+            AppNotifications.warning("Подтверждение устарело", "Привязка операции изменилась. Проверьте текущее состояние.");
+            return;
+        }
         List<String> ids = data.contracts().stream()
                 .filter(contract -> contract.payer().equals(operation.payer().name())
                         && contract.recipient().equals(operation.recipient().name()))
@@ -220,9 +227,9 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
             AppNotifications.warning("Нет подходящих договоров", "Для смены связи проверьте стороны операции и договора.");
             return;
         }
-        contractDialog("Изменить договор", ids);
+        contractDialog("Изменить договор", ids, expected);
     }
-    private void contractDialog(String title, List<String> ids) {
+    private void contractDialog(String title, List<String> ids, DemoOperationState.Match expected) {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle(title);
         Select<String> select = new Select<>();
@@ -237,6 +244,7 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
         justification.setWidthFull();
         justification.setPlaceholder("Укажите, почему выбран этот договор");
         dialog.add(UiParts.div("detail-dialog-text", UiParts.text("", "Операция " + operation.id()),
+                UiParts.text("", "Текущий договор: " + expected.contractId()),
                 select, justification));
         dialog.getFooter().add(UiParts.button("app-action app-action--secondary", "Отмена", dialog::close),
                 UiParts.button("app-action app-action--primary", "Подтвердить выбор", () -> {
@@ -246,11 +254,12 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
                         return;
                     }
                     try {
-                        state.link(operation.id(), select.getValue(), "Вручную", data.contracts(),
+                        state.changeLinkIfUnchanged(operation.id(), expected, select.getValue(), data.contracts(),
                                 justification.getValue());
                         dialog.close(); render();
                         AppNotifications.success("Договор привязан", operation.id() + " · " + select.getValue());
                     } catch (IllegalArgumentException | IllegalStateException ex) {
+                        dialog.close(); render();
                         AppNotifications.error("Не удалось изменить договор", ex.getMessage());
                     }
                 }));
@@ -259,14 +268,21 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
     private void unlinkContract() {
         if (!demoWritable()) return;
         if (!allowed(Action.UNLINK)) return;
-        String id = state.match(operation.id()).contractId();
+        DemoOperationState.Match expected = state.match(operation.id());
+        if (expected == null) {
+            render();
+            AppNotifications.warning("Подтверждение устарело", "Привязка операции изменилась. Проверьте текущее состояние.");
+            return;
+        }
+        String id = expected.contractId();
         confirmation("Отвязать договор", "Убрать привязку " + id + " от операции " + operation.id() + "?",
                 "Отвязать", () -> {
                     try {
-                        state.unlink(operation.id());
+                        state.unlinkIfUnchanged(operation.id(), expected);
                         render();
                         AppNotifications.info("Договор отвязан", operation.id() + " · " + id);
                     } catch (IllegalArgumentException | IllegalStateException ex) {
+                        render();
                         AppNotifications.error("Не удалось отвязать договор", ex.getMessage());
                     }
                 });

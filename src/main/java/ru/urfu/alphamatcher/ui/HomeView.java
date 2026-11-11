@@ -19,6 +19,12 @@ public class HomeView extends Div {
 
     public HomeView(DemoDataService data) {
         setClassName("dashboard app-page");
+        DemoStateUpdates.bind(this, data.state(), () -> refresh(data));
+        refresh(data);
+    }
+
+    private void refresh(DemoDataService data) {
+        removeAll();
         refreshRole();
         var recent = data.operations();
         var dateFormat = java.time.format.DateTimeFormatter.ofPattern("d MMMM yyyy 'г.'",

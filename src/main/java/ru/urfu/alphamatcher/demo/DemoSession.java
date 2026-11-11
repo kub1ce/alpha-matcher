@@ -1,6 +1,8 @@
 package ru.urfu.alphamatcher.demo;
 
 import com.vaadin.flow.server.VaadinSession;
+import com.vaadin.flow.component.ComponentUtil;
+import com.vaadin.flow.component.UI;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,11 +18,11 @@ public final class DemoSession {
     }
     public static DemoUser user() { return (DemoUser) VaadinSession.getCurrent().getAttribute(USER); }
     public static DemoMatchingDraft matchingDraft() {
-        var session = VaadinSession.getCurrent();
-        DemoMatchingDraft draft = (DemoMatchingDraft) session.getAttribute(MATCHING_DRAFT);
+        UI ui = java.util.Objects.requireNonNull(UI.getCurrent(), "Нет текущей вкладки");
+        DemoMatchingDraft draft = ComponentUtil.getData(ui, DemoMatchingDraft.class);
         if (draft == null) {
             draft = new DemoMatchingDraft();
-            session.setAttribute(MATCHING_DRAFT, draft);
+            ComponentUtil.setData(ui, DemoMatchingDraft.class, draft);
         }
         return draft;
     }
@@ -38,6 +40,7 @@ public final class DemoSession {
         session.setAttribute(USER, null);
         notifyUserChanged(session);
         session.setAttribute(MATCHING_DRAFT, null);
+        for (UI ui : session.getUIs()) ComponentUtil.setData(ui, DemoMatchingDraft.class, null);
         DemoNotificationService.clearSession();
         DemoDataService.clearSession();
     }

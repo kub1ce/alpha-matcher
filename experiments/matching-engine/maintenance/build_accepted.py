@@ -3,22 +3,23 @@ Run from repository root: python -X utf8 -B experiments/matching-engine/maintena
 Requires Java25 and Maven wrapper. No SQL or server is started.
 """
 from pathlib import Path
-import os,sys,json,shutil,subprocess,zipfile,hashlib
+import os,sys,json,shutil,subprocess,zipfile,hashlib,tempfile
 HERE=Path(__file__).resolve().parent;MODULE=HERE.parent;ROOT=MODULE.parents[1]
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def verify(jar):
     spec=json.loads((HERE/'ACCEPTED_JAR_CONTENT_SHA256.json').read_text())
     with zipfile.ZipFile(jar) as z:
-        assert len(z.namelist())==len(set(z.namelist()))
-        assert {e.filename:hashlib.sha256(z.read(e)).hexdigest() for e in z.infolist()}==spec['entries']
+        if len(z.namelist())!=len(set(z.namelist())):raise RuntimeError('Duplicate accepted JAR entries')
+        if {e.filename:hashlib.sha256(z.read(e)).hexdigest() for e in z.infolist()}!=spec['entries']:raise RuntimeError('Accepted JAR contents changed')
 def main():
     dest=MODULE/'target/matching-engine-0.1-SNAPSHOT.jar'
     freeze=json.loads((MODULE/'stage6/final-acceptance/ENGINE_FREEZE.json').read_text())
-    for name,h in freeze['mainSourceSHA256'].items():assert sha(MODULE/Path(name.replace('\\','/')))==h
+    for name,h in freeze['mainSourceSHA256'].items():
+        if sha(MODULE/Path(name.replace('\\','/')))!=h:raise RuntimeError('Accepted source SHA256 mismatch: '+name)
     if dest.exists():verify(dest);print('Existing accepted-content JAR verified; no rebuild required');return
-    work=HERE/'build-isolated'
-    if work.exists():raise RuntimeError('Isolated build already exists; inspect it rather than overwriting it')
-    work.mkdir();shutil.copy2(MODULE/'pom.xml',work/'pom.xml');shutil.copytree(MODULE/'src',work/'src')
+    # Keep previous successful/failed builds intact, including their diagnostics.
+    work=Path(tempfile.mkdtemp(prefix='build-isolated-',dir=HERE))
+    shutil.copy2(MODULE/'pom.xml',work/'pom.xml');shutil.copytree(MODULE/'src',work/'src')
     for relative in ['stage4batch/baseline-4b1/src/main/java','stage3/corpora']:
         shutil.copytree(MODULE/relative,work/relative)
     cmd=[str(ROOT/'mvnw.cmd' if os.name=='nt' else ROOT/'mvnw'),'-q','-f',str(work/'pom.xml'),'test','package']
@@ -27,7 +28,8 @@ def main():
         cmd=[str(ps),'-NoProfile','-ExecutionPolicy','Bypass','-File',str(HERE/'invoke-maven.ps1'),'-Wrapper',str(ROOT/'mvnw.cmd'),'-Pom',str(work/'pom.xml')]
     subprocess.run(cmd,check=True,timeout=600)
     sources=json.loads((HERE/'ACCEPTED_HARNESS_SOURCES.json').read_text())['sources'];classes=work/'target/classes'
-    for name,h in sources.items():assert sha(MODULE/name)==h
+    for name,h in sources.items():
+        if sha(MODULE/name)!=h:raise RuntimeError('Accepted harness source SHA256 mismatch: '+name)
     javac=Path(os.environ['JAVA_HOME'])/'bin'/('javac.exe' if os.name=='nt' else 'javac')
     subprocess.run([str(javac),'-encoding','UTF-8','-cp',str(classes),'-d',str(classes),*[str(MODULE/n) for n in sources]],check=True,timeout=120)
     built=work/'target/matching-engine-0.1-SNAPSHOT.jar'

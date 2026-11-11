@@ -18,6 +18,7 @@ public class ContractDetailView extends Div implements BeforeEnterObserver {
     private final DemoDataService data;
     private final DemoContractService contracts;
     private final DemoOperationState state;
+    private String contractId;
     private String returnSource;
     private String operationReturnSource;
 
@@ -25,6 +26,7 @@ public class ContractDetailView extends Div implements BeforeEnterObserver {
         this.data = data;
         this.contracts = contracts;
         this.state = data.state();
+        DemoStateUpdates.bind(this, state, this::refresh);
         setClassName("contract-detail-page app-page");
     }
 
@@ -35,6 +37,13 @@ public class ContractDetailView extends Div implements BeforeEnterObserver {
                 .getOrDefault("from", java.util.List.of()).stream().findFirst().orElse(null);
         operationReturnSource = event.getLocation().getQueryParameters().getParameters()
                 .getOrDefault("return", java.util.List.of()).stream().findFirst().orElse("operations");
+        contractId = id;
+        refresh();
+    }
+
+    private void refresh() {
+        if (contractId == null) return;
+        String id = contractId;
         removeAll();
         DemoDataService.Contract contract = contracts.contract(id);
         if (contract == null) {

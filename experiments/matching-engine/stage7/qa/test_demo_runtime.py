@@ -5,10 +5,12 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+import warnings
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -91,6 +93,119 @@ class LauncherTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaisesRegex(RuntimeError, 'Unsafe MySQL archive'):
                 self.prepare(folder, payload, hashlib.sha256(payload).hexdigest())
+
+    def test_engine_guards_reject_changed_sources_manifests_and_jar_entries(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(runtime, 'M', Path(folder)):
+            module = Path(folder)
+            source = module / 'engine.java'
+            source.write_bytes(b'accepted source')
+            jar = module / 'target/matching-engine-0.1-SNAPSHOT.jar'
+            jar.parent.mkdir()
+            freeze = {'version': 'stage6-accepted-1ebb240ff4bc',
+                      'mainSourceSHA256': {'engine.java': runtime.digest(source)},
+                      'jarSHA256': 'historical ZIP SHA'}
+            content = {'originalJarSHA256': freeze['jarSHA256'],
+                       'entries': {'engine.class': hashlib.sha256(b'accepted class').hexdigest()}}
+            cases = ('valid', 'version', 'source', 'manifest', 'changed', 'extra', 'duplicate')
+            for case in cases:
+                with self.subTest(case=case):
+                    current = dict(freeze)
+                    expected = dict(content)
+                    source.write_bytes(b'changed' if case == 'source' else b'accepted source')
+                    if case == 'version': current['version'] = 'unaccepted'
+                    if case == 'manifest': expected['originalJarSHA256'] = 'unrelated'
+                    with warnings.catch_warnings(), zipfile.ZipFile(jar, 'w') as package:
+                        warnings.simplefilter('ignore', UserWarning)
+                        package.writestr('engine.class', b'changed' if case == 'changed' else b'accepted class')
+                        if case == 'extra': package.writestr('extra.class', b'extra')
+                        if case == 'duplicate': package.writestr('engine.class', b'accepted class')
+                    with patch.object(runtime, 'read', side_effect=[current, expected]):
+                        if case == 'valid': self.assertEqual(current, runtime.verify_engine())
+                        else:
+                            with self.assertRaises(RuntimeError): runtime.verify_engine()
+
+    def test_run_checks_initialization_schema_and_build_exit_codes(self):
+        for phase in ('initialize', 'schema', 'build'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as folder:
+                stage = Path(folder)
+                root = stage / 'run'
+                root.mkdir()
+                (stage / 'sql').mkdir()
+                (stage / 'sql/001_schema.sql').write_bytes(b'fixture')
+                init = Mock(); init.wait.return_value = 7 if phase == 'initialize' else 0
+                server = Mock(); server.poll.return_value = None
+                build = Mock(); build.wait.return_value = 9
+                def spawn(args, log_path, job, env=None):
+                    name = log_path.stem
+                    if name == 'mysql-initialize':
+                        (root / 'mysql-data/auto.cnf').write_text('server-uuid=fixture\n')
+                        return init
+                    return {'mysql-server': server, 'build-test': build}[name]
+                schema = Mock(returncode=8 if phase == 'schema' else 0, stdout=b'', stderr=b'')
+                with patch.object(runtime, 'S', stage), patch.object(runtime, 'M', stage), \
+                     patch.object(runtime, 'Lease'), patch.object(runtime, 'Job'), \
+                     patch.object(runtime, 'own_info', return_value={'pid': 27}), \
+                     patch.object(runtime, 'verify_engine'), patch.object(runtime, 'retire', return_value=[]), \
+                     patch.object(runtime.socket, 'socket'), \
+                     patch.object(runtime, 'checked_mysql', return_value=stage / 'mysql'), \
+                     patch.object(runtime, 'start_owned', side_effect=spawn) as start, \
+                     patch.object(runtime.subprocess, 'run', return_value=schema):
+                    with self.assertRaisesRegex(RuntimeError, {'initialize': 'MySQL initialization', 'schema': 'schema initialization', 'build': 'Build/test failed'}[phase]):
+                        runtime.run(root, False, stage / 'mysql')
+                    init.wait.assert_called_once_with(timeout=180)
+                    if phase == 'build': build.wait.assert_called_once_with(timeout=900)
+                    else: build.wait.assert_not_called()
+                    self.assertNotIn('application', [call.args[1].stem for call in start.call_args_list])
+
+    def test_job_assignment_failure_stops_real_created_child(self):
+        with tempfile.TemporaryDirectory() as folder:
+            error = OSError('simulated Job assignment failure')
+            job = Mock(); job.add.side_effect = error
+            popen = subprocess.Popen
+            children = []
+            def spawn(*args, **kwargs):
+                child = popen(*args, **kwargs); children.append(child); return child
+            try:
+                with patch.object(runtime.subprocess, 'Popen', side_effect=spawn):
+                    with self.assertRaises(OSError) as caught:
+                        runtime.start_owned([sys.executable, '-B', '-c', 'import time; time.sleep(60)'], Path(folder) / 'child.log', job)
+                self.assertIs(error, caught.exception)
+                self.assertEqual(1, len(children))
+                self.assertIsNotNone(children[0].poll())
+                job.add.assert_called_once_with(children[0])
+            finally:
+                for child in children:
+                    if child.poll() is None: child.kill()
+                    child.wait(timeout=10)
+
+    def test_job_assignment_cleanup_retries_and_preserves_original_error(self):
+        for failure in (subprocess.TimeoutExpired('child', 10), OSError('terminate failed')):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as folder:
+                error = OSError('assignment failed')
+                job = Mock(); job.add.side_effect = error
+                child = Mock(); child.poll.return_value = None
+                if isinstance(failure, OSError): child.terminate.side_effect = failure
+                else: child.wait.side_effect = [failure, 1]
+                with patch.object(runtime.subprocess, 'Popen', return_value=child):
+                    with self.assertRaises(OSError) as caught:
+                        runtime.start_owned(['fixture'], Path(folder) / 'child.log', job)
+                self.assertIs(error, caught.exception)
+                child.terminate.assert_called_once()
+                child.kill.assert_called_once()
+                self.assertEqual(30, child.wait.call_args.kwargs['timeout'])
+
+    def test_job_assignment_preserves_both_errors_if_cleanup_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            error = OSError('assignment failed')
+            job = Mock(); job.add.side_effect = error
+            child = Mock(); child.poll.return_value = None
+            child.terminate.side_effect = OSError('terminate failed')
+            child.kill.side_effect = OSError('kill failed')
+            with patch.object(runtime.subprocess, 'Popen', return_value=child):
+                with self.assertRaises(OSError) as caught:
+                    runtime.start_owned(['fixture'], Path(folder) / 'child.log', job)
+            self.assertIs(error, caught.exception)
+            self.assertIn('kill failed', error.__notes__[0])
 
 
 if __name__ == '__main__':

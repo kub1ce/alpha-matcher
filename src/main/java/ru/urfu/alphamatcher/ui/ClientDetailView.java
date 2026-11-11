@@ -25,11 +25,13 @@ public class ClientDetailView extends Div implements BeforeEnterObserver {
     private List<DemoClientService.RelatedOperation> linkedOperations = List.of();
     private int operationPage;
     private String clientId;
+    private String returnSource;
 
     public ClientDetailView(DemoDataService data, DemoClientService clients) {
         this.data = data;
         this.clients = clients;
         this.state = data.state();
+        DemoStateUpdates.bind(this, state, this::refresh);
         setClassName("client-detail-page app-page");
     }
 
@@ -38,6 +40,17 @@ public class ClientDetailView extends Div implements BeforeEnterObserver {
         String id = event.getRouteParameters().get("id").orElse("");
         String source = event.getLocation().getQueryParameters().getParameters()
                 .getOrDefault("from", List.of()).stream().findFirst().orElse(null);
+        clientId = id;
+        returnSource = source;
+        operationPage = 0;
+        refresh();
+    }
+
+    private void refresh() {
+        if (clientId == null) return;
+        String id = clientId;
+        String source = returnSource;
+        int previousPage = operationPage;
         removeAll();
         DemoDataService.Party party = data.client(id, state);
         if (party == null) {
@@ -48,8 +61,8 @@ public class ClientDetailView extends Div implements BeforeEnterObserver {
         }
         clientId = id;
         linkedOperations = clients.operations(id, state);
-        operationPage = 0;
         add(hero(party, source), contractsSection(party), operationsSection());
+        showOperationPage(previousPage);
     }
 
     private Div hero(DemoDataService.Party party, String source) {
