@@ -1,17 +1,12 @@
-# Compiled class file
+# Java / JVM
 *.class
-
-# Log file
 *.log
-
-# BlueJ files
 *.ctxt
-
-# Mobile Tools for Java (J2ME)
 .mtj.tmp/
-
-# Package Files #
 *.jar
+!/vendor/maven/ru/urfu/alphamatcher/matching-engine-optimized/1.2.5-m68-br/matching-engine-optimized-1.2.5-m68-br.jar
+# Keep the Maven Wrapper binary if this project uses it.
+!/.mvn/wrapper/maven-wrapper.jar
 *.war
 *.nar
 *.ear
@@ -19,47 +14,137 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# JVM crash dumps and profiling artifacts
 hs_err_pid*
 replay_pid*
+*.hprof
+*.jfr
+*.dmp
 
-# IntelliJ IDEA
+# IDE / operating systems
 .idea/
-
-# VSCode
 .vscode/
+*.iml
+.DS_Store
+Thumbs.db
+Desktop.ini
 
-# mvn
-/target/
-/node_modules/
+# Build outputs / generated frontend
+**/target/
+/release/
+/target-*/
+*.jar.original
+**/node_modules/
 /frontend/generated/
-/.vaadin/
+/src/main/frontend/generated/
+**/.vaadin/
 
-# Generated files
-src/main/frontend/generated/
-
-# Another
+# Project-local research and handoff exports (existing policy)
 docs/design/
 docs/qa/
-# Local instructions, research exports and private configuration
 /docs/report-handoff/
+
+# Credentials and private local configuration
 .env
 .env.*
 !.env.example
-!*.example
+!.env.*.example
 **/private/
-**/runtime/
+
+# QA runtimes and local database state
+# Includes qa/finalization/runtime/release-candidate.jar: retain its local backup.
+/runtime/
+/qa/**/runtime/
+/experiments/**/runtime/
+/tools/**/runtime/
 **/mysql-data/
-**/target/
-**/node_modules/
+/qa/**/logs/
+/qa/**/datasets-tmp/
+
+# Python tooling and generated files
 **/__pycache__/
 **/.venv/
+**/venv/
 **/site-packages/
-**/.vaadin/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+*.py[cod]
+
+# Temporary files
 *.etl
-*.jfr
-*.dmp
 *.tmp
 *.partial
-.DS_Store
-Thumbs.db
+*.pid
+*.swp
+
+
+# Copies, generated frontend and downloaded local services
+/_old-backup-conflicts/
+**/build-isolated-*/
+**/plot-runtime/
+*.trace
+*.bak
+*.stackdump
+
+# Local configuration overrides and private key material
+**/application-local.properties
+**/application-local.yml
+**/application-local.yaml
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# The application uses only the pinned 1.2.5-m68-br Maven coordinate.
+/vendor/maven/ru/urfu/alphamatcher/matching-engine-optimized/1.2.4-m68-qa/
+
+# Retired engine workspace: keep only the SQL, fixtures and ownership helper
+# used by the current engine tests and disposable MySQL tools.
+/experiments/matching-engine/*
+!/experiments/matching-engine/.gitattributes
+!/experiments/matching-engine/.gitignore
+!/experiments/matching-engine/compose.yaml
+!/experiments/matching-engine/sql/
+/experiments/matching-engine/sql/*
+!/experiments/matching-engine/sql/001_schema.sql
+!/experiments/matching-engine/src/
+/experiments/matching-engine/src/*
+!/experiments/matching-engine/src/test/
+/experiments/matching-engine/src/test/*
+!/experiments/matching-engine/src/test/resources/
+/experiments/matching-engine/src/test/resources/*
+!/experiments/matching-engine/src/test/resources/cases.csv
+!/experiments/matching-engine/src/test/resources/fixtures.sql
+!/experiments/matching-engine/stage5a/
+/experiments/matching-engine/stage5a/*
+!/experiments/matching-engine/stage5a/persistence_v2.py
+
+# Engine module and small fixtures required by MySQL IT and StreamingDifferentialTest.
+/experiments/matching-engine-optimized/*
+!/experiments/matching-engine-optimized/.gitignore
+!/experiments/matching-engine-optimized/pom.xml
+!/experiments/matching-engine-optimized/src/
+!/experiments/matching-engine-optimized/stage3/
+/experiments/matching-engine-optimized/stage3/*
+!/experiments/matching-engine-optimized/stage3/corpora/
+/experiments/matching-engine-optimized/stage3/corpora/*
+!/experiments/matching-engine-optimized/stage3/corpora/*.sql
+!/experiments/matching-engine-optimized/stage3/corpora/*.tsv
+!/experiments/matching-engine-optimized/stage4batch/
+/experiments/matching-engine-optimized/stage4batch/*
+!/experiments/matching-engine-optimized/stage4batch/baseline-4b1/
+/experiments/matching-engine-optimized/stage4batch/baseline-4b1/*
+!/experiments/matching-engine-optimized/stage4batch/baseline-4b1/src/
+
+# Local evidence and retired QA runners. Keep the reusable MySQL fixture runner
+# and the Flyway smoke entry point used by tools/dev/jdbc.py.
+/qa/customer-validation/
+/qa/finalization/
+/qa/parser-context-20261113/
+/qa/performance/
+/qa/final-hardening/*
+!/qa/final-hardening/run_mysql.py
+/qa/theme-parser-20261113/*
+!/qa/theme-parser-20261113/flyway_smoke.py

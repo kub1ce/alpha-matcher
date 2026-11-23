@@ -2,6 +2,7 @@ package ru.urfu.alphamatcher.ui;
 
 import java.util.List;
 import com.vaadin.flow.component.html.Div;
+import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
@@ -22,7 +23,7 @@ public class ClientDetailView extends Div implements BeforeEnterObserver {
     private final DemoOperationState state;
     private final Div operationRows = UiParts.div("client-operation-rows");
     private final AppPagination pagination = new AppPagination(this::showOperationPage);
-    private List<DemoClientService.RelatedOperation> linkedOperations = List.of();
+    private final Span operationCount=UiParts.text("contract-section-title","");
     private int operationPage;
     private String clientId;
     private String returnSource;
@@ -60,7 +61,6 @@ public class ClientDetailView extends Div implements BeforeEnterObserver {
             return;
         }
         clientId = id;
-        linkedOperations = clients.operations(id, state);
         add(hero(party, source), contractsSection(party), operationsSection());
         showOperationPage(previousPage);
     }
@@ -129,22 +129,19 @@ public class ClientDetailView extends Div implements BeforeEnterObserver {
                 UiParts.text("", "Состояние"));
         Div table = UiParts.div("client-operations-table",
                 UiParts.div("client-operation-viewport", header, operationRows), pagination);
-        showOperationPage(0);
-        return UiParts.div("contract-section", UiParts.div("contract-section-header",
-                UiParts.text("contract-section-title", "Операции с участием клиента ("
-                        + linkedOperations.size() + ")")), table);
+        return UiParts.div("contract-section", UiParts.div("contract-section-header",operationCount), table);
     }
 
     private void showOperationPage(int requested) {
-        AppPagination.Window window = AppPagination.window(linkedOperations.size(), requested);
-        operationPage = window.page();
+        var result=clients.operationPage(clientId,state,requested,AppPagination.PAGE_SIZE);
+        operationPage = result.page();
+        operationCount.setText("Операции с участием клиента ("+result.total()+")");
         operationRows.removeAll();
-        if (linkedOperations.isEmpty()) operationRows.add(UiParts.text("contract-empty",
+        if (result.rows().isEmpty()) operationRows.add(UiParts.text("contract-empty",
                 "Операций с участием клиента пока нет."));
-        for (DemoClientService.RelatedOperation item : linkedOperations.subList(
-                linkedOperations.isEmpty() ? 0 : window.start() - 1, window.end()))
+        for (DemoClientService.RelatedOperation item : result.rows())
             operationRows.add(operationRow(item));
-        pagination.update(linkedOperations.size(), operationPage);
+        pagination.update(result.total(), operationPage);
     }
 
     private Div operationRow(DemoClientService.RelatedOperation item) {
@@ -152,9 +149,9 @@ public class ClientDetailView extends Div implements BeforeEnterObserver {
         RouterLink link = OperationNavigation.link(operation.id(), operation.id(),
                 "client/" + clientId);
         link.setClassName("registry-reference");
-        DemoOperationState.Match match = state.match(operation.id());
-        RouterLink contract = match == null ? null : new RouterLink(match.contractId(),
-                ContractDetailView.class, new RouteParameters("id", match.contractId()));
+        String contractId=clients.relatedContractId(operation,state);
+        RouterLink contract = contractId.isEmpty() ? null : new RouterLink(contractId,
+                ContractDetailView.class, new RouteParameters("id", contractId));
         if (contract != null) {
             contract.setClassName("registry-contract-link");
             contract.setQueryParameters(QueryParameters.simple(
@@ -167,8 +164,8 @@ public class ClientDetailView extends Div implements BeforeEnterObserver {
                 UiParts.text("client-role", String.join(", ", item.roles())),
                 UiParts.text("registry-amount", operation.amountText()),
                 contract == null ? UiParts.text("registry-no-contract", "Не привязан") : contract,
-                UiParts.text(match == null ? "status unprocessed" : "status processed",
-                        match == null ? "Не обработана" : "Обработана"));
+                UiParts.text(contract == null ? "status unprocessed" : "status processed",
+                        contract == null ? "Не обработана" : "Обработана"));
     }
 
     private static String value(String text) { return text == null || text.isBlank() ? "Не указано" : text; }

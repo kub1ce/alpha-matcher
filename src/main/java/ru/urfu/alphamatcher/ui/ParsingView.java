@@ -10,7 +10,7 @@ import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.data.value.ValueChangeMode;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
-import ru.urfu.alphamatcher.parsing.BasicPaymentPurposeParser;
+import ru.urfu.alphamatcher.parsing.EnginePaymentPurposeParser;
 import ru.urfu.alphamatcher.parsing.ParseResult;
 import ru.urfu.alphamatcher.parsing.PaymentPurposeParser;
 
@@ -30,7 +30,7 @@ public class ParsingView extends Div {
         this.parser = parser;
         setClassName("parsing-page app-page");
         input.setWidthFull();
-        input.setMaxLength(BasicPaymentPurposeParser.MAX_LENGTH);
+        input.setMaxLength(EnginePaymentPurposeParser.MAX_LENGTH);
         input.setPlaceholder("Введите назначение платежа или загрузите пример");
         input.setValueChangeMode(ValueChangeMode.EAGER);
         input.addValueChangeListener(event -> output.setVisible(false));
@@ -72,12 +72,31 @@ public class ParsingView extends Div {
                     field("Номер договора", result.contracts()),
                     field("Возможные организации", result.organizations()),
                     UiParts.div("parsing-result-item",
-                            UiParts.text("parsing-result-label", "Платёж за третье лицо"),
+                            UiParts.text("parsing-result-label", "Упоминание платежа за третье лицо"),
                             badge(result.thirdPartyMentioned() ? ParseResult.Status.FOUND : ParseResult.Status.NOT_FOUND),
-                            UiParts.text("parsing-result-value", result.thirdPartyMentioned() ? "Есть текстовый признак" : "Не упоминается")));
+                            UiParts.text("parsing-result-value", result.thirdPartyMentioned() ? (ru.urfu.alphamatcher.experiment.MentionContexts.thirdPartyContext(result.features()) == ru.urfu.alphamatcher.experiment.MentionContexts.Context.NEGATED ? "Упоминание отрицается" : "Есть текстовое упоминание, не подтверждённый факт") : "Не упоминается")));
             diagnostics.removeAll();
             for (ParseResult.Diagnostic item : result.diagnostics())
                 diagnostics.add(UiParts.text("parsing-diagnostic " + item.kind().name().toLowerCase(), item.message()));
+            var features = result.features();
+            Div details = UiParts.div("parsing-diagnostics",
+                    UiParts.text("parsing-result-label", "Нормализованный текст"),
+                    UiParts.text("parsing-result-value", features.normalized()));
+            details.add(UiParts.text("parsing-result-value", "Контекст упоминания третьего лица: " + features.thirdPartyAssertion() + "; подтверждённый факт: false"));
+            for (var reference : features.contractReferences())
+                details.add(UiParts.text("parsing-result-value", "Ссылка: " + reference.surface()
+                        + "; варианты: " + reference.alternatives() + "; полнота: " + reference.completeness()
+                        + "; основания: " + reference.reasons()));
+            for (var name : features.names())
+                details.add(UiParts.text("parsing-result-value", "ФИО: " + name.surface()
+                        + "; ключ: " + name.key() + "; распознано: " + name.recognized()));
+            for (var claim : features.roleClaims())
+                details.add(UiParts.text("parsing-result-value", "Роль: " + claim.role() + "; " + claim.kind() + ": " + claim.value()));
+            for (var mention : features.mentions())
+                details.add(UiParts.text("parsing-result-value", mention.toString()));
+            for (String issue : features.issues())
+                details.add(UiParts.text("parsing-result-value", issue));
+            diagnostics.add(new com.vaadin.flow.component.details.Details("Признаки и интерпретации", details));
             output.setVisible(true);
         } catch (IllegalArgumentException exception) {
             error.setText(exception.getMessage());
@@ -98,6 +117,7 @@ public class ParsingView extends Div {
     private Span badge(ParseResult.Status status) {
         String caption = switch (status) {
             case FOUND -> "Найдено";
+            case MULTIPLE -> "Несколько значений";
             case NOT_FOUND -> "Не найдено";
             case AMBIGUOUS -> "Неоднозначно";
             case INVALID -> "Некорректно";
@@ -110,7 +130,7 @@ public class ParsingView extends Div {
         values.put("ФИО, ИНН и договор", "Оплата за Иванова Ивана Ивановича, ИНН 123456789012, по договору AG-2026-031");
         values.put("Оплата организации", "Оплата ООО «Ромашка» по договору № AG-2026-014 за поставку оборудования");
         values.put("Платёж за третье лицо", "Платёж за третье лицо по дог. № AG-2026-031");
-        values.put("Несколько ИНН", "ИНН 7707083893; ИНН 500100732259. Оплата услуг.");
+        values.put("Несколько ИНН", "ИНН 7707083893; ИНН 000012345627. Оплата услуг.");
         values.put("Несколько договоров", "Оплата по договору AG-2026-014 и по договору AG-2026-021");
         values.put("Без реквизитов", "Оплата консультационных услуг за октябрь");
         values.put("Некорректный ИНН", "ИНН 1234567890, оплата по договору № AG-2026-044");

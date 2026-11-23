@@ -1,3 +1,0 @@
-services:
-  app:
-    command: ["sh", "/work/stage4b/run-compare.sh"]

@@ -14,7 +14,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class DemoReportingServiceTest {
-    private final DemoDataService data = new DemoDataService();
+    private final DemoDataService data = new ru.urfu.alphamatcher.demo.EngineStubDataService();
     private final DemoReportingService reporting = new DemoReportingService();
     private final DemoMatchingService matching = new DemoMatchingService(data);
     private final DemoOperationState state = new DemoOperationState(data.originalFixtures());
@@ -127,6 +127,8 @@ class DemoReportingServiceTest {
         assertEquals(1, state.batchRuns().size());
         assertEquals(1, state.auditEvents().size());
         assertEquals(1, reporting.runs(state, run.id(), "", true, 0, 8).total());
+        assertEquals(1, reporting.runs(state, "05.10.2026  -  13.10.2026", "", true, 0, 8).total());
+        assertEquals(1, reporting.runs(state, "2026-10-05", "", true, 0, 8).total());
     }
 
     @Test

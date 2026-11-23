@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 class DemoMatchingTabTest {
     private final UI tabA = new UI();
     private final UI tabB = new UI();
-    private final DemoDataService data = new DemoDataService();
+    private final DemoDataService data = new ru.urfu.alphamatcher.demo.EngineStubDataService();
     private final DemoMatchingService matching = new DemoMatchingService(data);
     private final DemoOperationState state = new DemoOperationState(data.fixtures());
 

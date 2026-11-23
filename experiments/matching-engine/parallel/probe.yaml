@@ -1,3 +1,0 @@
-services:
-  app:
-    command: ["java", "-Xms128m", "-Xmx1024m", "-cp", "/work/target/classes:/work/target/dependency/*", "ru.urfu.alphamatcher.experiment.CatalogProbeMain"]

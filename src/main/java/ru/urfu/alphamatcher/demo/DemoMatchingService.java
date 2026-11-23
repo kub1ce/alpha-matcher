@@ -1,6 +1,9 @@
 package ru.urfu.alphamatcher.demo;
 
 import java.time.LocalDate;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -11,17 +14,26 @@ import org.springframework.stereotype.Service;
 import ru.urfu.alphamatcher.demo.DemoDataService.Contract;
 import ru.urfu.alphamatcher.demo.DemoDataService.Operation;
 
-/** Deterministic demo proposals. A preview never changes confirmed matches or the manual queue. */
+/** Engine proposals and employee confirmations. A preview never changes confirmed matches or the manual queue. */
 @Service
 public class DemoMatchingService {
     public enum Status { SAFE, REVIEW, NO_CONTRACT, ALREADY_MANUAL, SKIPPED }
     public record Proposal(String operationId, Status status, String contractId,
-                           List<String> candidates, String reason, boolean queued) implements java.io.Serializable { }
+                           List<String> candidates, String reason, boolean queued,
+                           ru.urfu.alphamatcher.experiment.MatchingModel.Decision decision) implements java.io.Serializable {
+        public Proposal(String operationId, Status status, String contractId, List<String> candidates, String reason, boolean queued) {
+            this(operationId, status, contractId, candidates, reason, queued, null);
+        }
+    }
     public record Preview(LocalDate from, LocalDate to, boolean includeProcessed, boolean includeManual,
                           long revision, int fingerprint,
-                          List<Proposal> rows) implements java.io.Serializable {
+                          List<Proposal> rows, String sourceVersion) implements java.io.Serializable {
+        public Preview { rows = List.copyOf(rows); }
         public long count(Status status) { return rows.stream().filter(p -> p.status() == status).count(); }
         public Proposal find(String id) { return rows.stream().filter(p -> p.operationId().equals(id)).findFirst().orElse(null); }
+        public java.util.stream.Stream<Proposal> selected(Set<String> ids) {
+            return rows.stream().filter(row -> ids.contains(row.operationId()));
+        }
     }
     public record BatchResult(int selected, int applied, int sentManual, int skipped, String runId) { }
 
@@ -36,71 +48,92 @@ public class DemoMatchingService {
                            boolean includeProcessed, boolean includeManual) {
         if (from == null || to == null || from.isAfter(to))
             throw new IllegalArgumentException("Укажите корректный период: начало не позже окончания");
-        List<Proposal> rows = state.all().stream()
-                .filter(op -> !op.timestamp().toLocalDate().isBefore(from) && !op.timestamp().toLocalDate().isAfter(to))
-                .filter(op -> includeProcessed || !state.isLinked(op.id()))
+        if (!data.hasMatchingSource())
+            throw new IllegalStateException("Полный анализ доступен в профиле jdbc-demo с изолированной MySQL.");
+        return data.readMatchingSnapshot(() -> previewInSnapshot(state, from, to, includeProcessed, includeManual));
+    }
+
+    private Preview previewInSnapshot(DemoOperationState state, LocalDate from, LocalDate to,
+                                      boolean includeProcessed, boolean includeManual) {
+        List<Operation> scope = state.operationsInPeriod(from, to);
+        var observer = new PeriodFingerprint(state);
+        scope.forEach(observer::add);
+        var before = observer.finish(data.contracts());
+        List<Proposal> rows = scope.stream()
+                .filter(op -> includeProcessed || !state.isLinked(op.id()) && "LOADED".equals(data.operationStatus(op.id())))
                 .filter(op -> includeManual || !state.isManualQueued(op.id()))
                 .sorted(Comparator.comparing(Operation::timestamp).reversed())
                 .map(op -> propose(op, state)).toList();
-        return new Preview(from, to, includeProcessed, includeManual, state.revision(),
-                fingerprint(state, from, to), rows);
+        synchronized (state) {
+            if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("Поиск отменён");
+            if (!before.equals(periodVersion(state, from, to)))
+                throw new IllegalStateException("Данные изменились во время анализа. Повторите поиск.");
+            for (Proposal row : rows) if (row.decision() != null) { state.analysis(row.operationId(), row.decision()); state.proposal(row); }
+            return new Preview(from, to, includeProcessed, includeManual, state.revision(),
+                    before.fingerprint(), rows, before.sourceVersion());
+        }
     }
 
     /** Only state that can affect proposals inside the selected period invalidates a preview. */
     public int fingerprint(DemoOperationState state, LocalDate from, LocalDate to) {
-        List<Object> relevant = new ArrayList<>();
-        for (Operation op : state.all()) {
-            LocalDate date = op.timestamp().toLocalDate();
-            if (date.isBefore(from) || date.isAfter(to)) continue;
-            relevant.add(op);
-            relevant.add(state.match(op.id()));
-            relevant.add(state.isManualQueued(op.id()));
-            relevant.add(state.manualReason(op.id()));
-            relevant.add(state.previousContract(op.id()));
+        return periodVersion(state, from, to).fingerprint();
+    }
+
+    private PeriodVersion periodVersion(DemoOperationState state, LocalDate from, LocalDate to) {
+        var observer = new PeriodFingerprint(state);
+        state.visitOperationsInPeriod(from, to, observer::add);
+        return observer.finish(data.contracts());
+    }
+
+    private record PeriodVersion(int fingerprint, String sourceVersion) { }
+
+    private static final class PeriodFingerprint {
+        private final DemoOperationState state;
+        private final MessageDigest digest;
+        private int hash = 1;
+
+        private PeriodFingerprint(DemoOperationState state) {
+            this.state = state;
+            try { digest = MessageDigest.getInstance("SHA-256"); }
+            catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
         }
-        relevant.add(data.contracts());
-        return relevant.hashCode();
+
+        private void add(Operation operation) {
+            if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("Поиск отменён");
+            String id = operation.id();
+            // Same fold as the previous List.hashCode, without retaining the input rows or employee facts.
+            hash = 31 * hash + operation.hashCode();
+            hash = 31 * hash + Objects.hashCode(state.match(id));
+            hash = 31 * hash + Boolean.hashCode(state.isManualQueued(id));
+            hash = 31 * hash + Objects.hashCode(state.manualReason(id));
+            hash = 31 * hash + Objects.hashCode(state.previousContract(id));
+            digest.update(operation.sourceVersion().getBytes(StandardCharsets.US_ASCII));
+            digest.update((byte) 0);
+        }
+
+        private PeriodVersion finish(List<Contract> contracts) {
+            return new PeriodVersion(31 * hash + contracts.hashCode(),
+                    java.util.HexFormat.of().formatHex(digest.digest()));
+        }
     }
 
     public Proposal propose(Operation op, DemoOperationState state) {
+        if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("Поиск отменён");
+        var decision = data.analyze(op);
         if (state.isLinked(op.id())) return new Proposal(op.id(), Status.SKIPPED,
-                state.match(op.id()).contractId(), List.of(), "Связь уже подтверждена; повторное применение запрещено.", false);
-        LinkedHashSet<String> ids = new LinkedHashSet<>(op.candidates());
-        if (state.previousContract(op.id()) != null) ids.add(state.previousContract(op.id()));
-        List<String> candidates = ids.stream().filter(id -> data.contract(id) != null).toList();
+                state.match(op.id()).contractId(), List.of(), "Связь уже подтверждена; повторное применение запрещено.", false, decision);
+        List<String> candidates = decision.candidateIds().stream().map(data::contractReference).toList();
         boolean queued = state.isManualQueued(op.id());
-        if (queued) return new Proposal(op.id(), Status.ALREADY_MANUAL, null, candidates,
-                "Ручная задача уже создана. Повторная отправка не требуется. "
-                        + (state.manualReason(op.id()) != null ? state.manualReason(op.id())
-                                : op.reason().isBlank() ? "Проверьте операцию в очереди." : op.reason()), true);
-        if (candidates.isEmpty()) return new Proposal(op.id(), Status.NO_CONTRACT, null, candidates,
-                op.reason().isBlank() ? "Подходящий договор не указан в демонстрационных реквизитах."
-                        : op.reason() + ". Подтверждённого кандидата нет.", queued);
-        if (candidates.size() != 1) return new Proposal(op.id(), Status.REVIEW, null, candidates,
-                "Несколько кандидатов: требуется осознанный выбор сотрудника. Демонстрационная проверка.", queued);
-        Contract contract = data.contract(candidates.getFirst());
-        boolean sameParties = contract.payer().equals(op.payer().name())
-                && contract.recipient().equals(op.recipient().name());
-        DemoDataService.Party payer = data.party(contract.payer());
-        DemoDataService.Party recipient = data.party(contract.recipient());
-        boolean sameInn = payer != null && recipient != null
-                && !op.payer().inn().isBlank() && !op.recipient().inn().isBlank()
-                && op.payer().inn().equals(payer.inn()) && op.recipient().inn().equals(recipient.inn());
-        boolean explicitContract = op.purpose().contains(contract.id());
-        boolean thirdParty = op.purpose().toLowerCase().contains("третье лицо")
-                || op.purpose().toLowerCase().contains("за иванова");
-        if (op.reason().isBlank() && state.previousContract(op.id()) == null
-                && sameParties && sameInn && explicitContract && !thirdParty) {
-            return new Proposal(op.id(), Status.SAFE, contract.id(), candidates,
-                    "Номер договора указан в назначении, стороны и оба ИНН совпадают; иных кандидатов нет.", false);
-        }
-        String reason = queued && op.reason().isBlank() ? "Операция уже направлена сотрудником на ручной разбор."
-                : !op.reason().isBlank() ? op.reason()
-                : !sameParties || !sameInn ? "Стороны или ИНН не совпадают с договором."
-                : !explicitContract ? "Номер договора не подтверждён назначением платежа."
-                : "Ранее подтверждённая связь была отвязана; требуется ручная проверка.";
-        if (thirdParty) reason += " Проверьте выгодоприобретателя и основание платежа.";
-        return new Proposal(op.id(), Status.REVIEW, null, candidates, reason + " Демонстрационная проверка.", queued);
+        Status status = queued ? Status.ALREADY_MANUAL : Status.valueOf(decision.status().name());
+        String reason = decision.checks().stream().filter(check -> !check.passed())
+                .map(check -> check.code() + ": " + check.explanation())
+                .collect(java.util.stream.Collectors.joining("; "));
+        if (reason.isBlank()) reason = decision.checks().stream().map(check -> check.explanation())
+                .collect(java.util.stream.Collectors.joining("; "));
+        if (queued) reason = "Ручная задача уже создана. " + reason;
+        Proposal proposal = new Proposal(op.id(), status, decision.proposedContractId() == null ? null
+                : data.contractReference(decision.proposedContractId()), candidates, reason, queued, decision);
+        return proposal;
     }
 
     public boolean loadTestBatch(DemoOperationState state) {
@@ -112,10 +145,10 @@ public class DemoMatchingService {
     }
 
     public BatchResult apply(DemoOperationState state, Preview preview, Set<String> selected, String initiator) {
-        return perform(state, preview, selected, initiator, false);
+        return data.confirmAtomically(state, () -> perform(state, preview, selected, initiator, false));
     }
     public BatchResult sendToManual(DemoOperationState state, Preview preview, Set<String> selected, String initiator) {
-        return perform(state, preview, selected, initiator, true);
+        return data.confirmAtomically(state, () -> perform(state, preview, selected, initiator, true));
     }
 
     private BatchResult perform(DemoOperationState state, Preview preview, Set<String> selected,
@@ -124,18 +157,22 @@ public class DemoMatchingService {
             DemoPermissions.requireCurrentIfPresent(manual
                     ? DemoPermissions.Action.QUEUE_MANUAL : DemoPermissions.Action.APPLY_SAFE);
             initiator = DemoPermissions.currentActorOr(initiator);
-            if (preview == null || preview.fingerprint() != fingerprint(state, preview.from(), preview.to()))
+            if (preview == null) throw new IllegalStateException("Сначала сформируйте предпросмотр.");
+            var current = periodVersion(state, preview.from(), preview.to());
+            if (preview.fingerprint() != current.fingerprint() || !preview.sourceVersion().equals(current.sourceVersion()))
                 throw new IllegalStateException("Данные изменились после предпросмотра. Пересчитайте предложения.");
             Set<String> ids = new LinkedHashSet<>(Objects.requireNonNull(selected));
             if (ids.isEmpty()) throw new IllegalArgumentException("Выберите хотя бы одну операцию");
+            var byId = new java.util.HashMap<String,Proposal>();
+            preview.selected(ids).forEach(row -> byId.put(row.operationId(),row));
             List<Proposal> actionable = new ArrayList<>();
             for (String id : ids) {
-                Proposal old = preview.find(id);
+                Proposal old = byId.get(id);
                 if (old == null) throw new IllegalArgumentException("Выбрана операция вне текущего предпросмотра");
                 Operation op = state.operation(id);
                 if (op == null || !old.equals(propose(op, state)))
                     throw new IllegalStateException("Предложение устарело. Пересчитайте предпросмотр.");
-                if (manual ? !state.isLinked(id) && !state.isManualQueued(id) : old.status() == Status.SAFE)
+                if (manual ? old.status() != Status.SKIPPED && !state.isLinked(id) && !state.isManualQueued(id) : old.status() == Status.SAFE)
                     actionable.add(old);
             }
             if (actionable.isEmpty()) throw new IllegalArgumentException(manual
@@ -145,24 +182,23 @@ public class DemoMatchingService {
             for (Proposal p : actionable) if (!manual) {
                 Contract contract = data.contract(p.contractId());
                 Operation op = state.operation(p.operationId());
-                if (contract == null || !contract.payer().equals(op.payer().name())
-                        || !contract.recipient().equals(op.recipient().name()))
+                if (contract == null || op == null)
                     throw new IllegalStateException("Предложение устарело. Пересчитайте предпросмотр.");
             }
             String runId = state.nextRunId();
             for (Proposal p : actionable) {
                 if (manual) {
                     Operation op = state.operation(p.operationId());
-                    state.queueForManual(p.operationId(), op.reason().isBlank()
-                            ? "Передано сотрудником из предпросмотра" : op.reason(), initiator, runId);
+                    state.queueForManual(p.operationId(), p.reason().isBlank()
+                            ? "Передано сотрудником из предпросмотра" : p.reason(), initiator, runId);
                 } else state.link(p.operationId(), p.contractId(), "Автоматически", data.contracts(),
                         p.reason(), initiator, runId);
             }
-            int noContract = (int) ids.stream().map(preview::find)
+            int noContract = (int) byId.values().stream()
                     .filter(p -> p.status() == Status.NO_CONTRACT).count();
-            int alreadyQueued = (int) ids.stream().map(preview::find)
+            int alreadyQueued = (int) byId.values().stream()
                     .filter(p -> p.status() == Status.ALREADY_MANUAL).count();
-            int alreadyProcessed = (int) ids.stream().map(preview::find)
+            int alreadyProcessed = (int) byId.values().stream()
                     .filter(p -> p.status() == Status.SKIPPED).count();
             state.recordRun(new DemoOperationState.BatchRun(runId, DemoOperationState.now(), initiator,
                     preview.from(), preview.to(), preview.rows().size(), ids.size(), actionable.size(),

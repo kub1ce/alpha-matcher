@@ -27,6 +27,8 @@ public class HomeView extends Div {
         removeAll();
         refreshRole();
         var recent = data.operations();
+        var operationState = data.state();
+        int manualCount = operationState.queueReasons().size();
         var dateFormat = java.time.format.DateTimeFormatter.ofPattern("d MMMM yyyy 'г.'",
                 java.util.Locale.forLanguageTag("ru"));
         String currentDate = recent.isEmpty() ? "" : recent.getFirst().timestamp().format(dateFormat);
@@ -41,7 +43,7 @@ public class HomeView extends Div {
                 UiParts.div("greeting-actions",
                         UiParts.iconButton("app-action app-action--neutral", "Открыть операции", VaadinIcon.ARROW_RIGHT, true,
                                 () -> UI.getCurrent().navigate(OperationsView.class)),
-                        UiParts.iconButton("app-action app-action--warning", "Ручной разбор (" + data.manualItems().size() + ")", VaadinIcon.EXCLAMATION_CIRCLE_O,
+                        UiParts.iconButton("app-action app-action--warning", "Ручной разбор (" + manualCount + ")", VaadinIcon.EXCLAMATION_CIRCLE_O,
                                 false, () -> go("manual")),
                         UiParts.iconButton("app-action app-action--primary", "Запустить автопривязку", VaadinIcon.PLAY_CIRCLE_O,
                                 false, () -> go("matching"))));
@@ -74,10 +76,10 @@ public class HomeView extends Div {
         Div manual = UiParts.div("panel manual-panel");
         manual.add(UiParts.div("side-panel-heading",
                 UiParts.iconText("side-panel-title warning-text", VaadinIcon.EXCLAMATION_CIRCLE_O,
-                        "Очередь ручного разбора (" + data.manualItems().size() + ")"),
+                        "Очередь ручного разбора (" + manualCount + ")"),
                 UiParts.iconButton("text-link brown-text", "Перейти", VaadinIcon.ARROW_RIGHT, true,
                         () -> go("manual"))));
-        for (var item : data.manualItems().subList(0, Math.min(4, data.manualItems().size()))) {
+        for (var item : data.recentManualItems(operationState, 4)) {
             RouterLink manualLink = OperationNavigation.link(item.operationId(), item.operationId(), "home");
             manualLink.setClassName("operation-id");
             manual.add(UiParts.div("manual-item",

@@ -5,6 +5,7 @@ import com.vaadin.browserless.BrowserlessTest;
 import com.vaadin.browserless.internal.Routes;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.UI;
+import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.server.VaadinService;
 import com.vaadin.flow.server.VaadinSession;
@@ -17,7 +18,7 @@ import org.junit.jupiter.api.Test;
 import ru.urfu.alphamatcher.demo.*;
 
 class DemoStateUpdatesComponentTest extends BrowserlessTest {
-    private final DemoDataService data = new DemoDataService();
+    private final DemoDataService data = new ru.urfu.alphamatcher.demo.EngineStubDataService();
     private final DemoMatchingService matching = new DemoMatchingService(data);
     private UI tabA;
     private UI tabB;
@@ -66,6 +67,28 @@ class DemoStateUpdatesComponentTest extends BrowserlessTest {
                 .filter(c -> text(c).contains("PAY-2026-000184")).findFirst().orElseThrow();
         assertTrue(text(row).contains("Не обработана"));
         assertEquals(1, state.auditEvents().size());
+    }
+
+    @Test void newlyRegisteredNoticeShowsIndicatorAndCanBeMarkedRead() {
+        var layout = new MainLayout(data, new DemoManualReviewService(data));
+        tabA.add(layout);
+        var indicator = all(layout).filter(c -> c.hasClassName("bell-dot")).findFirst().orElseThrow();
+        assertFalse(indicator.isVisible());
+        assertEquals(0, DemoNotificationService.current().unreadCount());
+        var bell = all(layout).filter(c -> c.hasClassName("bell-button")).map(Button.class::cast)
+                .findFirst().orElseThrow();
+        bell.click();
+        assertTrue(text(layout).contains("Уведомлений нет"));
+
+        AppNotifications.registerEvent(DemoNotificationService.Kind.WARNING, "Проверить новую операцию", "QA");
+        assertTrue(indicator.isVisible());
+        assertEquals(1, DemoNotificationService.current().unreadCount());
+        assertTrue(text(layout).contains("Проверить новую операцию"));
+        all(layout).filter(c -> c.hasClassName("notice-action")).map(Button.class::cast)
+                .findFirst().orElseThrow().click();
+        assertFalse(indicator.isVisible());
+        assertEquals(0, DemoNotificationService.current().unreadCount());
+        assertTrue(DemoNotificationService.current().items().getFirst().read());
     }
 
     @Test void batchDeliveryIsCoalescedUsesTargetUiAndSeesFinalRun() {

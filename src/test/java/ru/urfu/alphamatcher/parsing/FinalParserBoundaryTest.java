@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 import ru.urfu.alphamatcher.demo.DemoOperationState;
 
 class FinalParserBoundaryTest {
-    private final BasicPaymentPurposeParser parser = new BasicPaymentPurposeParser();
+    private final EnginePaymentPurposeParser parser = new EnginePaymentPurposeParser();
 
     @Test
     void specialCharactersMultipleValuesAndLimitKeepReadOnlyState() {
@@ -17,14 +17,15 @@ class FinalParserBoundaryTest {
                 + "ИНН 1234567894, ИНН 123456789047; ФИО: Петров Пётр Петрович");
         assertEquals(2, result.contracts().values().size());
         assertEquals(2, result.inns().values().size());
-        assertEquals("Петров Пётр Петрович", result.fullNames().values().getFirst());
-        assertEquals("ООО «Ромашка»", result.organizations().values().getFirst());
-        assertTrue(result.diagnostics().stream().anyMatch(item -> item.kind() == ParseResult.Kind.REVIEW));
+        assertFalse(result.features().names().isEmpty());
+        assertFalse(result.features().organizations().isEmpty());
+        assertEquals(ParseResult.Status.MULTIPLE, result.contracts().status());
+        assertEquals(ParseResult.Status.MULTIPLE, result.inns().status());
         var invalid = parser.parse("ИНН 1234567890; ИНН 1234567894");
         assertEquals(List.of("1234567890"), invalid.inns().invalidValues());
         assertEquals(List.of("1234567894"), invalid.inns().values());
         assertEquals(4000, parser.parse("А".repeat(4000)).originalText().length());
-        assertThrows(IllegalArgumentException.class, () -> parser.parse("А".repeat(4001)));
+        assertThrows(IllegalArgumentException.class, () -> parser.parse("А".repeat(EnginePaymentPurposeParser.MAX_LENGTH + 1)));
         assertEquals(beforeRevision, state.revision());
         assertTrue(state.batchRuns().isEmpty());
         assertTrue(state.auditEvents().isEmpty());

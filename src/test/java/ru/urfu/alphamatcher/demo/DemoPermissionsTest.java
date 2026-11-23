@@ -14,7 +14,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 class DemoPermissionsTest {
-    private final DemoDataService data = new DemoDataService();
+    private final DemoDataService data = new ru.urfu.alphamatcher.demo.EngineStubDataService();
     private final DemoManualReviewService review = new DemoManualReviewService(data);
     private final DemoMatchingService matching = new DemoMatchingService(data);
     private final DemoOperationState state = new DemoOperationState(data.originalFixtures());

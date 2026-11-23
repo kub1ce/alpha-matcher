@@ -17,7 +17,7 @@ import ru.urfu.alphamatcher.demo.DemoMatchingService.Status;
 import ru.urfu.alphamatcher.ui.AppPagination;
 
 class FinalBoundaryAuditTest {
-    private final DemoDataService data = new DemoDataService();
+    private final DemoDataService data = new ru.urfu.alphamatcher.demo.EngineStubDataService();
     private final DemoMatchingService matching = new DemoMatchingService(data);
     private final DemoManualReviewService review = new DemoManualReviewService(data);
 
@@ -171,7 +171,7 @@ class FinalBoundaryAuditTest {
         var missingClientContract = new DemoDataService.Contract("AG-QA", "Проверочный договор",
                 "12.10.2026", template.payer().name(), template.recipient().name(), "Поставка", null,
                 "CL-MISSING", "CL-MISSING-2");
-        DemoDataService isolated = new DemoDataService() {
+        DemoDataService isolated = new ru.urfu.alphamatcher.demo.EngineStubDataService() {
             @Override public List<DemoDataService.Contract> contracts() { return List.of(missingClientContract); }
         };
         assertNull(isolated.client(missingClientContract.payerId(), state));

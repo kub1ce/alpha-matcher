@@ -15,4 +15,10 @@ class AppPaginationTest {
         assertEquals(new AppPagination.Window(0, 1, 1, 4), AppPagination.window(4, 12));
         assertThrows(IllegalArgumentException.class, () -> AppPagination.window(-1, 0));
     }
+
+    @Test
+    void lastPageDoesNotOverflowAtMaximumIntCount() {
+        assertEquals(new AppPagination.Window(214_748_364, 214_748_365, 2_147_483_641, Integer.MAX_VALUE),
+                AppPagination.window(Integer.MAX_VALUE, Integer.MAX_VALUE));
+    }
 }

@@ -22,7 +22,6 @@ import ru.urfu.alphamatcher.demo.DemoReportingService;
 @PageTitle("История запусков - А.Выгодоприобретатель")
 public class RunHistoryView extends Div {
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
-    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private final DemoOperationState state;
     private final DemoReportingService reporting;
     private final TextField search = new TextField();
@@ -54,6 +53,8 @@ public class RunHistoryView extends Div {
                         UiParts.text("registry-title", "История пакетных действий"),
                         UiParts.text("registry-count", "Подтверждённые пакетные действия."))),
                 UiParts.div("report-filter-row app-filter-controls", search, type, reset)));
+        if (data instanceof ru.urfu.alphamatcher.matching.JdbcDemoDataService)
+            add(new RouterLink("Долговременные пакетные задания", BulkPreviewView.class));
         dateSort = UiParts.button("registry-sort", "Дата и время", () -> {
             descending = !descending; refreshFromStart();
         });
@@ -106,7 +107,7 @@ public class RunHistoryView extends Div {
         initiator.getElement().setAttribute("title", run.initiator());
         return UiParts.div("report-run-grid report-table-row", details,
                 UiParts.text("muted", run.time().format(DATE_TIME)),
-                UiParts.text("muted", run.from().format(DATE) + " - " + run.to().format(DATE)),
+                UiParts.text("muted", DemoReportingService.period(run)),
                 initiator,
                 UiParts.text("", run.considered() + " / " + run.selected() + " / " + run.eligible()),
                 UiParts.text("report-positive", String.valueOf(run.applied())),
@@ -122,7 +123,7 @@ public class RunHistoryView extends Div {
         Div status = detail("Статус", run.skipped() == 0 ? "Завершено" : "Завершено частично");
         Div overview = UiParts.div("report-detail-overview",
                 detail("Дата и время", run.time().format(DATE_TIME)),
-                detail("Период отбора", run.from().format(DATE) + " - " + run.to().format(DATE)),
+                detail("Период отбора", DemoReportingService.period(run)),
                 initiator(run.initiator()),
                 detail("Тип", run.type()),
                 status);

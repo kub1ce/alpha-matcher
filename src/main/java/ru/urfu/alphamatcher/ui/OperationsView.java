@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import com.vaadin.flow.component.UI;
+import com.vaadin.flow.component.ComponentUtil;
 import com.vaadin.flow.component.datepicker.DatePicker;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
@@ -16,14 +17,14 @@ import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouteParameters;
 import com.vaadin.flow.router.RouterLink;
-import com.vaadin.flow.server.VaadinSession;
 import ru.urfu.alphamatcher.demo.DemoDataService;
 import ru.urfu.alphamatcher.demo.DemoOperationState;
+import ru.urfu.alphamatcher.demo.DemoSession;
+import ru.urfu.alphamatcher.matching.JdbcDemoDataService;
 
 @Route(value = "section/operations", layout = MainLayout.class)
 @PageTitle("Реестр операций - А.Выгодоприобретатель")
 public class OperationsView extends Div {
-    private static final String SESSION_KEY = "operations-registry-view";
     static final class RegistryState implements Serializable {
         String search = "";
         LocalDate from = LocalDate.of(2026, 9, 1);
@@ -53,10 +54,11 @@ public class OperationsView extends Div {
         this.data = data;
         state = data.state();
         DemoStateUpdates.bind(this, state, this::refresh);
-        RegistryState current = (RegistryState) VaadinSession.getCurrent().getAttribute(SESSION_KEY);
+        UI ui = UI.getCurrent();
+        RegistryState current = ComponentUtil.getData(ui, RegistryState.class);
         if (current == null) {
             current = new RegistryState();
-            VaadinSession.getCurrent().setAttribute(SESSION_KEY, current);
+            ComponentUtil.setData(ui, RegistryState.class, current);
         }
         saved = current;
         pagination = new AppPagination(target -> { saved.page = target; refresh(); });
@@ -70,7 +72,15 @@ public class OperationsView extends Div {
                     + "&to=" + (to.getValue() == null ? "" : to.getValue());
             UI.getCurrent().navigate("section/matching" + dates);
         });
-        filterCard.add(UiParts.div("registry-topline", title, matching));
+        Div actions = UiParts.div("registry-actions", matching);
+        if (data instanceof JdbcDemoDataService) {
+            actions.add(UiParts.button("app-action app-action--secondary", "Предпросмотр по фильтру", () -> {
+                ComponentUtil.setData(ui, BulkPreviewView.RegistryFilter.class,
+                        new BulkPreviewView.RegistryFilter(registryQuery(), DemoSession.user()));
+                ui.navigate(BulkPreviewView.class);
+            }));
+        }
+        filterCard.add(UiParts.div("registry-topline", title, actions));
         search.setPlaceholder("Поиск по референсу, ФИО, ИНН или назначению...");
         search.setAriaLabel("Поиск операций");
         search.setValueChangeMode(ValueChangeMode.EAGER);
@@ -145,13 +155,18 @@ public class OperationsView extends Div {
     }
 
     private void refreshFromStart() { saved.page = 0; refresh(); }
-    private void refresh() {
+    private DemoOperationState.Query registryQuery() {
         String selectedStatus = "Все состояния".equals(status.getValue()) ? "" : status.getValue();
         String selectedMethod = "Все способы".equals(method.getValue()) ? "" : method.getValue();
-        DemoOperationState.Page result = state.search(new DemoOperationState.Query(saved.search, saved.from,
-                saved.to, selectedStatus, selectedMethod, saved.sort, saved.descending), saved.page, AppPagination.PAGE_SIZE);
+        return new DemoOperationState.Query(saved.search, saved.from, saved.to, selectedStatus,
+                selectedMethod, saved.sort, saved.descending);
+    }
+
+    private void refresh() {
+        var registry = state.registry(registryQuery(), saved.page, AppPagination.PAGE_SIZE);
+        var result = registry.page();
         saved.page = result.page();
-        count.setText("Найдено операций: " + result.total() + " из " + state.all().size());
+        count.setText("Найдено операций: " + result.total() + " из " + registry.catalogTotal());
         pagination.update(result.total(), saved.page);
         sortButtons.forEach((key, button) -> {
             String label = switch (key) {
@@ -175,6 +190,7 @@ public class OperationsView extends Div {
 
     private Div row(DemoDataService.Operation op) {
         DemoOperationState.Match match = state.match(op.id());
+        String linked = op.sourceVersion().isEmpty() ? match == null ? "" : match.contractId() : op.initialContract();
         RouterLink id = OperationNavigation.link(op.id(), op.id(), "operations");
         id.setClassName("registry-reference");
         id.getElement().setAttribute("title", op.id());
@@ -190,10 +206,10 @@ public class OperationsView extends Div {
                 UiParts.text("registry-date", op.date()), payer, recipient, inns,
                 UiParts.text("registry-amount", op.amountText()),
                 purpose,
-                match == null ? UiParts.text("registry-no-contract", "Нет договора")
-                        : contextLink("contracts", match.contractId(), match.contractId()),
-                UiParts.text(match == null ? "status unprocessed" : "status processed",
-                        match == null ? "Не обработана" : "Обработана"));
+                linked.isEmpty() ? UiParts.text("registry-no-contract", "Нет договора")
+                        : contextLink("contracts", linked, linked),
+                UiParts.text(linked.isEmpty() ? "status unprocessed" : "status processed",
+                        linked.isEmpty() ? "Не обработана" : "Обработана"));
         row.getElement().setAttribute("data-operation-id", op.id());
         row.getElement().executeJs("this.addEventListener('contextmenu', event => event.preventDefault())");
         row.getElement().addEventListener("contextmenu", event -> {

@@ -15,10 +15,10 @@ public final class AppPagination extends Div {
 
     public static Window window(int total, int requestedPage) {
         if (total < 0) throw new IllegalArgumentException("Количество записей не может быть отрицательным");
-        int pages = Math.max(1, (total + PAGE_SIZE - 1) / PAGE_SIZE);
+        int pages = Math.max(1, Math.ceilDiv(total, PAGE_SIZE));
         int page = Math.max(0, Math.min(requestedPage, pages - 1));
         return new Window(page, pages, total == 0 ? 0 : page * PAGE_SIZE + 1,
-                Math.min(total, (page + 1) * PAGE_SIZE));
+                (int) Math.min(total, (page + 1L) * PAGE_SIZE));
     }
 
     private final Span range = UiParts.text("", "");

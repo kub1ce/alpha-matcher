@@ -5,6 +5,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 import ru.urfu.alphamatcher.demo.DemoOperationState.AuditEvent;
@@ -24,25 +25,24 @@ public class DemoReportingService {
     public record AuditPage(List<AuditEvent> rows, int total, int page, int pages) { }
 
     public Statistics statistics(DemoOperationState state) {
-        int automatic = 0, manual = 0, pending = 0, other = 0;
-        Map<String, Integer> reasons = new LinkedHashMap<>();
-        for (String category : List.of("Платёж за третье лицо", "Несколько договоров", "Конфликт ИНН",
-                "Недостаточно данных", "Договор не найден / прочее")) reasons.put(category, 0);
-        for (var operation : state.all()) {
-            var match = state.match(operation.id());
-            if (match != null) {
-                if ("Автоматически".equals(match.method())) automatic++;
-                else manual++;
-            } else if (state.isManualQueued(operation.id())) {
+        synchronized (state) {
+            var matches = state.confirmedMatches();
+            int automatic = Math.toIntExact(matches.values().stream()
+                    .filter(match -> "Автоматически".equals(match.method())).count());
+            int manual = matches.size() - automatic, pending = 0;
+            automatic = Math.addExact(automatic,state.durableAutomaticCount());
+            Map<String, Integer> reasons = new LinkedHashMap<>();
+            for (String category : List.of("Платёж за третье лицо", "Несколько договоров", "Конфликт ИНН",
+                    "Недостаточно данных", "Договор не найден / прочее")) reasons.put(category, 0);
+            for (String reason : state.queueReasons().values()) {
                 pending++;
-                String reason = state.manualReason(operation.id()) == null
-                        ? operation.reason() : state.manualReason(operation.id());
                 String category = classify(reason);
                 reasons.put(category, reasons.get(category) + 1);
-            } else other++;
+            }
+            int total = state.totalOperations();
+            return new Statistics(total, automatic, manual, pending, total - automatic - manual - pending,
+                    Collections.unmodifiableMap(reasons));
         }
-        return new Statistics(state.all().size(), automatic, manual, pending, other,
-                Collections.unmodifiableMap(reasons));
     }
 
     private String classify(String reason) {
@@ -56,36 +56,71 @@ public class DemoReportingService {
 
     public RunPage runs(DemoOperationState state, String search, String type,
                         boolean descending, int requested, int size) {
-        String needle = normalize(search);
+        String needle = DemoContractService.normalizedText(search);
         List<BatchRun> rows = state.batchRuns().stream()
                 .filter(run -> type == null || type.isBlank() || run.type().equals(type))
-                .filter(run -> normalize(run.id() + " " + run.initiator() + " " + run.type()
-                        + " " + run.from() + " " + run.to()).contains(needle))
+                .filter(run -> java.util.stream.Stream.of(run.id(), run.initiator(), run.type(), period(run),
+                                run.from().toString(), run.to().toString())
+                        .anyMatch(value -> DemoContractService.normalizedText(value).contains(needle)))
                 .sorted(descending ? Comparator.comparing(BatchRun::time).thenComparing(BatchRun::id).reversed()
                         : Comparator.comparing(BatchRun::time).thenComparing(BatchRun::id)).toList();
         int page = page(requested, size, rows.size());
         return new RunPage(slice(rows, page, size), rows.size(), page, pages(rows.size(), size));
     }
 
+    public static String period(BatchRun run) {
+        return run.from().format(DATE) + " - " + run.to().format(DATE);
+    }
+
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+
     public AuditPage audit(DemoOperationState state, String search, String actor, String action,
                            boolean descending, int requested, int size) {
         String needle = normalize(search);
-        List<AuditEvent> rows = state.auditEvents().stream()
-                .filter(event -> actor == null || actor.isBlank() || event.actor().equals(actor))
-                .filter(event -> action == null || action.isBlank() || event.action().equals(action))
-                .filter(event -> normalize(event.operationId() + " " + event.action() + " "
-                        + event.previous() + " " + event.current() + " " + event.runId()).contains(needle))
-                .sorted(descending ? Comparator.comparing(AuditEvent::time).thenComparing(AuditEvent::id).reversed()
-                        : Comparator.comparing(AuditEvent::time).thenComparing(AuditEvent::id)).toList();
-        int page = page(requested, size, rows.size());
-        return new AuditPage(slice(rows, page, size), rows.size(), page, pages(rows.size(), size));
+        if (size < 1) throw new IllegalArgumentException("Размер страницы должен быть положительным");
+        java.util.function.Predicate<AuditEvent> matches = event ->
+                (actor == null || actor.isBlank() || event.actor().equals(actor))
+                && (action == null || action.isBlank() || event.action().equals(action))
+                && normalize(event.operationId() + " " + event.action() + " " + event.previous()
+                        + " " + event.current() + " " + event.runId()).contains(needle);
+        var chronological = Comparator.comparing(AuditEvent::time).thenComparing(AuditEvent::id);
+        var order = descending ? chronological.reversed() : chronological;
+        var legacy = state.auditEvents().stream().filter(matches).sorted(order).iterator();
+        int target = Math.max(0, requested);
+        var selected = new java.util.ArrayList<AuditEvent>(size);
+        var last = new java.util.ArrayList<AuditEvent>(size);
+        int[] matched = {0};
+        java.util.function.Consumer<AuditEvent> collect = event -> {
+            if (matched[0] % size == 0) last.clear();
+            last.add(event);
+            if (matched[0] / size == target) selected.add(event);
+            matched[0] = Math.incrementExact(matched[0]);
+        };
+        AuditEvent[] older = {legacy.hasNext() ? legacy.next() : null};
+        state.visitDurableAudit(descending, event -> {
+            if (!matches.test(event)) return;
+            while (older[0] != null && order.compare(older[0], event) <= 0) {
+                collect.accept(older[0]);
+                older[0] = legacy.hasNext() ? legacy.next() : null;
+            }
+            collect.accept(event);
+        });
+        if (older[0] != null) collect.accept(older[0]);
+        legacy.forEachRemaining(collect);
+        int pages = Math.max(1, Math.ceilDiv(matched[0], size));
+        int page = Math.min(target, pages - 1);
+        return new AuditPage(List.copyOf(page == target ? selected : last), matched[0], page, pages);
     }
 
     public List<String> actors(DemoOperationState state) {
-        return state.auditEvents().stream().map(AuditEvent::actor).distinct().sorted().toList();
+        return java.util.stream.Stream.concat(state.auditEvents().stream().map(AuditEvent::actor),
+                state.durableAuditActors().stream()).distinct().sorted().toList();
     }
     public List<String> actions(DemoOperationState state) {
-        return state.auditEvents().stream().map(AuditEvent::action).distinct().sorted().toList();
+        var existing = state.auditEvents().stream().map(AuditEvent::action);
+        return java.util.stream.Stream.concat(existing, state.durableAutomaticCount() == 0
+                ? java.util.stream.Stream.empty() : java.util.stream.Stream.of("Автоматическая привязка"))
+                .distinct().sorted().toList();
     }
     public static int percent(int value, int denominator) {
         return denominator == 0 ? 0 : (int) Math.round(100.0 * value / denominator);

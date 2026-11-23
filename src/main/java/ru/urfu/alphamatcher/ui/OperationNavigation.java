@@ -30,13 +30,13 @@ final class OperationNavigation {
     }
 
     private static RouterLink parameterizedBack(String source) {
-        if (source.matches("manual/PAY-2026-[0-9]{6}"))
+        if (source.matches("manual/[A-Za-z0-9_-]{1,64}"))
             return new RouterLink("", ManualReviewDetailView.class,
                     new RouteParameters("id", source.substring("manual/".length())));
-        if (source.matches("contract/AG-2026-[0-9]{3}"))
+        if (source.matches("contract/(?:AG-2026-[0-9]{3}|DB-[0-9]{1,19})"))
             return new RouterLink("", ContractDetailView.class,
                     new RouteParameters("id", source.substring("contract/".length())));
-        if (source.matches("client/CL-[0-9]{3}"))
+        if (source.matches("client/(?:CL-[0-9]{3}|DB-CL-[0-9]{1,19})"))
             return new RouterLink("", ClientDetailView.class,
                     new RouteParameters("id", source.substring("client/".length())));
         return new RouterLink("", OperationsView.class);

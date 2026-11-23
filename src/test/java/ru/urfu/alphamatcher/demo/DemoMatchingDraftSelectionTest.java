@@ -33,4 +33,24 @@ class DemoMatchingDraftSelectionTest {
         draft.selected().clear();
         assertEquals(0, draft.selected().size());
     }
+
+    @Test
+    void frozenSelectAllKeepsExclusionsAndDoesNotIncludeALaterPreview() {
+        var first = new DemoMatchingService.Proposal("A", DemoMatchingService.Status.SAFE,
+                "AG-001", List.of("AG-001"), "", false);
+        var second = new DemoMatchingService.Proposal("B", DemoMatchingService.Status.REVIEW,
+                null, List.of(), "", false);
+        var draft = new DemoMatchingDraft();
+        var preview = new DemoMatchingService.Preview(null,null,false,false,0,0,List.of(first,second),"");
+        draft.save(preview, "Тест");
+        draft.selectResults(preview.rows());
+        draft.selectPage(List.of(second), false);
+        var frozen = draft.selectionSnapshot();
+        assertEquals(List.of(first), draft.selectedRows(preview.rows()).toList());
+        draft.selectPage(List.of(second), true);
+        assertEquals(2, draft.selected().size());
+        draft.save(new DemoMatchingService.Preview(null,null,false,false,0,0,List.of(second),""), "Тест");
+        assertEquals(java.util.Set.of("A"), frozen);
+        assertTrue(draft.selected().isEmpty());
+    }
 }

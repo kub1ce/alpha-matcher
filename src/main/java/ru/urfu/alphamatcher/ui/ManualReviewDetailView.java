@@ -2,7 +2,6 @@ package ru.urfu.alphamatcher.ui;
 
 import java.util.Map;
 import java.util.List;
-import java.util.stream.Stream;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -20,9 +19,11 @@ import com.vaadin.flow.router.RouterLink;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import ru.urfu.alphamatcher.demo.DemoDataService;
+import ru.urfu.alphamatcher.demo.DemoContractService;
 import ru.urfu.alphamatcher.demo.DemoManualReviewService;
 import ru.urfu.alphamatcher.demo.DemoOperationState;
 import ru.urfu.alphamatcher.demo.DemoPermissions;
+import ru.urfu.alphamatcher.demo.DemoSession;
 
 @Route(value = "manual/:id", layout = MainLayout.class)
 @PageTitle("Ручной разбор операции - А.Выгодоприобретатель")
@@ -36,13 +37,14 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
     private final Div selected = UiParts.div("manual-selection");
     private final TextArea justification = new TextArea("Обоснование решения");
     private Button submit;
+    private long formEmployee;
 
     public ManualReviewDetailView(DemoDataService data, DemoManualReviewService review, Environment environment) {
         this.data = data;
         this.review = review;
         this.state = data.state();
         DemoStateUpdates.bind(this, state, this::refreshPermissions);
-        this.demoMode = environment.acceptsProfiles(Profiles.of("demo"));
+        this.demoMode = environment.acceptsProfiles(Profiles.of("demo", "jdbc-demo"));
         setClassName("manual-detail-page app-page");
     }
 
@@ -50,11 +52,20 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
     public void beforeEnter(BeforeEnterEvent event) {
         operation = state.operation(event.getRouteParameters().get("id").orElse(""));
         selectedId = null;
+        formEmployee = DemoSession.employeeGeneration();
+        justification.clear();
+        justification.setInvalid(false);
         render();
     }
 
     void refreshPermissions() {
         selectedId = null;
+        long current = DemoSession.employeeGeneration();
+        if (formEmployee != current) {
+            formEmployee = current;
+            justification.clear();
+            justification.setInvalid(false);
+        }
         render();
     }
 
@@ -83,6 +94,8 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
                         .isBlank() ? "Нет причины разбора" : review.reason(operation, state)),
                         UiParts.text("", review.explanation(operation, state))));
         add(header);
+        header.add(EngineDecisionDetails.render(state.analysis(operation.id()), data),
+                OperationNavigation.link("Анализировать в карточке операции", operation.id(), "manual/" + operation.id()));
         if (match != null) {
             RouterLink contract = new RouterLink(match.contractId(), ContractDetailView.class,
                     new RouteParameters("id", match.contractId()));
@@ -97,6 +110,7 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
             return;
         }
         var suggestions = review.candidates(operation, state);
+        boolean canSearchRegistry = review.canSearchRegistry(operation, state);
         boolean canChoose = DemoPermissions.allowsCurrent(DemoPermissions.Action.MANUAL_COMPLEX)
                 || suggestions.stream().anyMatch(contract -> DemoPermissions.allowsCurrent(
                         DemoPermissions.manualAction(operation, contract, state)));
@@ -113,27 +127,54 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
                     "manual/" + operation.id());
             operationCard.setClassName("detail-object-link");
             candidates.add(UiParts.div("contract-empty",
-                    UiParts.text("", "Подходящих договоров в предложениях нет. Найдите договор в реестре ниже или "),
+                    UiParts.text("", canSearchRegistry
+                            ? "В предложениях нет договоров. Доступен поиск по реестру. "
+                            : "В предложениях нет договоров. "),
                     operationCard));
         }
-        else for (var contract : suggestions) candidates.add(candidateCard(contract, true));
+        else {
+            Div proposed = UiParts.div("manual-proposed-results");
+            suggestions.forEach(contract -> proposed.add(candidateCard(contract, true)));
+            if (canChoose) {
+                TextField candidateSearch = new TextField();
+                candidateSearch.setPlaceholder("Номер, сторона или ИНН кандидата");
+                candidateSearch.setAriaLabel("Поиск среди предложенных договоров");
+                candidateSearch.setWidthFull();
+                candidateSearch.setClearButtonVisible(true);
+                candidateSearch.setValueChangeMode(ValueChangeMode.LAZY);
+                candidateSearch.addValueChangeListener(e -> {
+                    proposed.removeAll();
+                    if (e.getValue().isBlank()) {
+                        suggestions.forEach(contract -> proposed.add(candidateCard(contract, true)));
+                    } else {
+                        var results = review.searchCandidates(e.getValue(), operation, state);
+                        if (results.isEmpty()) proposed.add(UiParts.text("contract-empty",
+                                "Среди доступных предложений совпадений нет"));
+                        results.forEach(hit -> proposed.add(searchCard(hit, true)));
+                    }
+                });
+                candidates.add(candidateSearch);
+            }
+            candidates.add(proposed);
+        }
         TextField contractSearch = new TextField();
-        contractSearch.setPlaceholder("Найти существующий договор по номеру или сторонам...");
+        contractSearch.setPlaceholder("Номер договора, сторона или ИНН");
         contractSearch.setAriaLabel("Найти договор для ручной привязки");
         contractSearch.setWidthFull();
-        contractSearch.setValueChangeMode(ValueChangeMode.EAGER);
+        contractSearch.setClearButtonVisible(true);
+        contractSearch.setValueChangeMode(ValueChangeMode.LAZY);
         Div found = UiParts.div("manual-search-results");
         contractSearch.addValueChangeListener(e -> {
             found.removeAll();
             if (e.getValue().isBlank()) { refreshAccessNote(accessNote, suggestions); return; }
-            var results = review.findContracts(e.getValue()).stream()
-                    .filter(c -> !suggestions.contains(c)).toList();
-            refreshAccessNote(accessNote, Stream.concat(suggestions.stream(), results.stream()).toList());
+            var results = review.findContracts(e.getValue(), operation, state);
             if (results.isEmpty()) found.add(UiParts.text("contract-empty", "По запросу подходящих договоров не найдено"));
-            else for (var contract : results) found.add(candidateCard(contract, false));
+            else results.forEach(hit -> found.add(searchCard(hit, false)));
         });
-        candidates.add(UiParts.div("manual-search-contracts",
-                UiParts.text("detail-label-strong", "Поиск по реестру договоров"), contractSearch, found));
+        if (canSearchRegistry) {
+            candidates.add(UiParts.div("manual-search-contracts",
+                    UiParts.text("detail-label-strong", "Поиск по реестру договоров"), contractSearch, found));
+        }
         justification.setWidthFull();
         justification.setPlaceholder("Кратко укажите, почему выбран этот договор");
         justification.setVisible(true);
@@ -160,6 +201,12 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
             box.add(client);
         }
         return box;
+    }
+
+    private Div searchCard(DemoContractService.Hit hit, boolean proposed) {
+        Div card = candidateCard(hit.contract(), proposed);
+        card.add(UiParts.text("muted", hit.match().label()));
+        return card;
     }
 
     private Div candidateCard(DemoDataService.Contract contract, boolean proposed) {
@@ -240,6 +287,12 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
             return;
         }
         justification.setInvalid(false);
+        var shown = operation;
+        String confirmedOperationId = shown.id();
+        String confirmedJustification = justification.getValue();
+        long confirmedRevision = state.revision();
+        long confirmedEmployee = DemoSession.employeeGeneration();
+        var confirmedDecision = state.analysis(confirmedOperationId);
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("Подтвердить ручную привязку");
         Div content = UiParts.div("manual-confirm-summary",
@@ -251,8 +304,19 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
         dialog.add(content);
         dialog.getFooter().add(UiParts.button("app-action app-action--secondary", "Отмена", dialog::close),
                 UiParts.button("app-action app-action--primary", "Подтвердить ручную привязку", () -> {
+                    if (!dialog.isOpened()) return;
                     try {
-                        review.confirm(operation.id(), contract.id(), justification.getValue(), true, state);
+                        DemoSession.requireSameEmployeeGeneration(confirmedEmployee);
+                        if (operation == null || !confirmedOperationId.equals(operation.id()))
+                            throw new IllegalStateException("Подтверждение устарело. Открыта другая операция.");
+                        synchronized (state) {
+                            if (state.revision() != confirmedRevision) throw new IllegalStateException("Подтверждение устарело. Проверьте текущее состояние операции.");
+                            data.confirmAtomically(state, () -> {
+                                data.requireCurrentOperation(shown);
+                                review.confirm(confirmedOperationId, contract.id(), confirmedJustification, true, state, confirmedDecision);
+                                return null;
+                            });
+                        }
                         dialog.close();
                         AppNotifications.success("Ручная привязка выполнена", operation.id() + " · " + contract.id());
                         UI.getCurrent().navigate(ManualReviewView.class);
@@ -262,6 +326,6 @@ public class ManualReviewDetailView extends Div implements BeforeEnterObserver {
                         render();
                     }
                 }));
-        dialog.open();
+        UiParts.openDialog(this, dialog);
     }
 }

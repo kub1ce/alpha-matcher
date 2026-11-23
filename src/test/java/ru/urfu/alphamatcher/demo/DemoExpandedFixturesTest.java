@@ -6,7 +6,7 @@ import java.time.LocalDate;
 import org.junit.jupiter.api.Test;
 
 class DemoExpandedFixturesTest {
-    private final DemoDataService data = new DemoDataService();
+    private final DemoDataService data = new ru.urfu.alphamatcher.demo.EngineStubDataService();
     private final DemoMatchingService matching = new DemoMatchingService(data);
     private final DemoReportingService reporting = new DemoReportingService();
 

@@ -4,6 +4,8 @@ import java.io.Serializable;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.UI;
+import com.vaadin.flow.component.ComponentUtil;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.VaadinIcon;
@@ -14,7 +16,6 @@ import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouteParameters;
 import com.vaadin.flow.router.RouterLink;
-import com.vaadin.flow.server.VaadinSession;
 import ru.urfu.alphamatcher.demo.DemoClientService;
 import ru.urfu.alphamatcher.demo.DemoDataService;
 import ru.urfu.alphamatcher.demo.DemoOperationState;
@@ -22,7 +23,6 @@ import ru.urfu.alphamatcher.demo.DemoOperationState;
 @Route(value = "section/clients", layout = MainLayout.class)
 @PageTitle("Клиенты и контрагенты - А.Выгодоприобретатель")
 public class ClientsView extends Div {
-    private static final String SESSION_KEY = "client-registry-view";
     private static final String ALL_TYPES = "Все типы участников";
     private static final String ALL_PARTIES = "Все участники";
     private static final String BANK = "Клиенты банка";
@@ -54,10 +54,11 @@ public class ClientsView extends Div {
         this.clients = clients;
         this.state = data.state();
         DemoStateUpdates.bind(this, state, this::refresh);
-        RegistryState current = (RegistryState) VaadinSession.getCurrent().getAttribute(SESSION_KEY);
+        UI ui = UI.getCurrent();
+        RegistryState current = ComponentUtil.getData(ui, RegistryState.class);
         if (current == null) {
             current = new RegistryState();
-            VaadinSession.getCurrent().setAttribute(SESSION_KEY, current);
+            ComponentUtil.setData(ui, RegistryState.class, current);
         }
         saved = current;
         pagination = new AppPagination(target -> { saved.page = target; refresh(); });
@@ -65,6 +66,7 @@ public class ClientsView extends Div {
 
         search.setPlaceholder("Поиск по названию, ИНН или ID клиента...");
         search.setAriaLabel("Поиск клиентов");
+        search.setClearButtonVisible(true);
         search.setValueChangeMode(ValueChangeMode.EAGER);
         search.setValue(saved.search);
         search.addValueChangeListener(event -> { saved.search = event.getValue(); refreshFromStart(); });

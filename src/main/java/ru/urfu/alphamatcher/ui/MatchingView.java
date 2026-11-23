@@ -53,6 +53,12 @@ public class MatchingView extends Div implements BeforeEnterObserver {
     private Preview preview;
     private boolean rendering;
     private boolean busy;
+    private Thread analysisThread;
+    private long analysisGeneration;
+    private long selectionEmployee;
+    private final Span analysisStatus = UiParts.text("muted", "");
+    private final Button cancelAnalysis = UiParts.button("app-action app-action--secondary", "Отменить поиск", this::cancelAnalysis);
+
     private String repeatSource;
     private String selectionNotice;
 
@@ -68,6 +74,7 @@ public class MatchingView extends Div implements BeforeEnterObserver {
             renderResults();
         });
         this.selected = draft.selected();
+        this.selectionEmployee = DemoSession.employeeGeneration();
         this.preview = draft.preview();
         this.page = draft.page();
         setClassName("matching-page app-page");
@@ -79,8 +86,8 @@ public class MatchingView extends Div implements BeforeEnterObserver {
         to.setRequiredIndicatorVisible(true);
         includeProcessed.setValue(draft.includeProcessed());
         includeManual.setValue(draft.includeManual());
-        from.addValueChangeListener(e -> saveParameters());
-        to.addValueChangeListener(e -> saveParameters());
+        from.addValueChangeListener(e -> dateChanged());
+        to.addValueChangeListener(e -> dateChanged());
         includeProcessed.addValueChangeListener(e -> { saveParameters(); if (!rendering && preview != null) refreshPreview(); });
         includeManual.addValueChangeListener(e -> { saveParameters(); if (!rendering && preview != null) refreshPreview(); });
         Div intro = UiParts.div("matching-intro",
@@ -119,12 +126,30 @@ public class MatchingView extends Div implements BeforeEnterObserver {
             updateSelection();
         });
         results.add(UiParts.text("matching-waiting", "Нажмите «Найти привязки», чтобы увидеть предложения."));
+        cancelAnalysis.setVisible(false);
+        controls.add(analysisStatus, cancelAnalysis);
+        addDetachListener(event -> cancelAnalysis());
         add(setup, results);
+        if (data instanceof ru.urfu.alphamatcher.matching.JdbcDemoDataService)
+            setup.add(new RouterLink("Долговременный предпросмотр", BulkPreviewView.class));
     }
 
-    public void refreshUser() { initiatorLabel.setText("Инициатор нового действия: " + currentInitiator()); }
+    public void refreshUser() {
+        initiatorLabel.setText("Инициатор нового действия: " + currentInitiator());
+        long current = DemoSession.employeeGeneration();
+        if (selectionEmployee == current) return;
+        selectionEmployee = current;
+        DemoSession.matchingDraft();
+        if (analysisThread != null) cancelAnalysis();
+        if (preview != null) renderResults();
+    }
     private void saveParameters() { draft.parameters(from.getValue(), to.getValue(),
             includeProcessed.getValue(), includeManual.getValue()); }
+
+    private void dateChanged() {
+        saveParameters();
+        if (!rendering && preview != null) renderResults();
+    }
 
     @Override
     public void beforeEnter(BeforeEnterEvent event) {
@@ -151,7 +176,7 @@ public class MatchingView extends Div implements BeforeEnterObserver {
             setDate(from, query.get("from"));
             setDate(to, query.get("to"));
             if (preview != null) {
-                if (preview.fingerprint() != matching.fingerprint(state, preview.from(), preview.to()))
+                if (sourceChanged(preview))
                     refreshFromCurrentState();
                 else renderResults();
             }
@@ -169,35 +194,75 @@ public class MatchingView extends Div implements BeforeEnterObserver {
         refreshPreview();
     }
 
+    private void cancelAnalysis() {
+        analysisGeneration++;
+        if (analysisThread != null) analysisThread.interrupt();
+        analysisThread = null;
+        cancelAnalysis.setVisible(false);
+        analysisStatus.setText("Поиск отменён. Подтверждённые связи не изменены.");
+        getUI().ifPresent(ui -> ui.setPollInterval(-1));
+        updateSelection();
+    }
+
     private void refreshPreview() {
-        try {
-            selectionNotice = selected.isEmpty() ? null : "Условия поиска изменены: прежний выбор сброшен.";
-            preview = matching.preview(state, from.getValue(), to.getValue(),
-                    includeProcessed.getValue(), includeManual.getValue());
-            draft.save(preview, currentInitiator());
-            page = 0;
-            from.setInvalid(false);
-            to.setInvalid(false);
-            renderResults();
-        } catch (IllegalArgumentException ex) {
-            from.setInvalid(from.getValue() == null);
-            to.setInvalid(to.getValue() == null || from.getValue() != null && from.getValue().isAfter(to.getValue()));
-            AppNotifications.warning("Проверьте период", ex.getMessage());
+        startPreview(from.getValue(), to.getValue(), includeProcessed.getValue(), includeManual.getValue(), false);
+    }
+
+    boolean analysisRunning() { return analysisThread != null; }
+
+    private void startPreview(LocalDate start, LocalDate end, boolean processed, boolean manual, boolean retainSelection) {
+        var ui = UI.getCurrent();
+        if (start == null || end == null || start.isAfter(end)) {
+            AppNotifications.warning("Проверьте период", "Укажите корректные начало и окончание периода.");
+            return;
         }
+        if (analysisThread != null) analysisThread.interrupt();
+        long generation = ++analysisGeneration;
+        String author = currentInitiator();
+        analysisStatus.setText("Выполняется анализ Matching Engine...");
+        cancelAnalysis.setVisible(true);
+        ui.setPollInterval(1000);
+        analysisThread = Thread.ofVirtual().name("matching-preview").start(() -> {
+            Preview computed = null;
+            RuntimeException failure = null;
+            try { computed = matching.preview(state, start, end, processed, manual); }
+            catch (RuntimeException e) { failure = e; }
+            Preview result = computed;
+            RuntimeException error = failure;
+            if (!ui.isAttached()) return;
+            try { ui.access(() -> {
+                if (generation != analysisGeneration || !isAttached()) return;
+                analysisThread = null;
+                cancelAnalysis.setVisible(false);
+                ui.setPollInterval(-1);
+                if (error != null) {
+                    analysisStatus.setText("Анализ не завершён. Решения не опубликованы.");
+                    updateSelection();
+                    AppNotifications.warning("Анализ недоступен", error.getMessage());
+                    return;
+                }
+                if (sourceChanged(result)) {
+                    analysisStatus.setText("Данные изменились во время анализа. Повторите поиск.");
+                    updateSelection();
+                    return;
+                }
+                if (retainSelection) refreshFromCurrentState(result);
+                else { preview = result; draft.save(preview, author); page = 0; }
+                analysisStatus.setText("Анализ завершён. Связи ожидают подтверждения.");
+                renderResults();
+            }); } catch (com.vaadin.flow.component.UIDetachedException ignored) { }
+        });
+        updateSelection();
     }
 
     private void refreshBusinessState() {
-        if (preview == null) return;
-        if (preview.fingerprint() != matching.fingerprint(state, preview.from(), preview.to()))
-            refreshFromCurrentState(matching.preview(state, preview.from(), preview.to(),
-                    preview.includeProcessed(), preview.includeManual()));
+        if (preview == null || analysisThread != null) return;
+        if (sourceChanged(preview))
+            startPreview(preview.from(), preview.to(), preview.includeProcessed(), preview.includeManual(), true);
         else renderResults();
     }
 
-    private void refreshFromCurrentState() {
-        refreshFromCurrentState(matching.preview(state, from.getValue(), to.getValue(),
-                includeProcessed.getValue(), includeManual.getValue()));
-    }
+    private void refreshFromCurrentState() { refreshPreview(); }
 
     private void refreshFromCurrentState(Preview refreshed) {
         Set<String> previousSelection = Set.copyOf(selected);
@@ -363,15 +428,19 @@ public class MatchingView extends Div implements BeforeEnterObserver {
         return row;
     }
 
+    private long[] selectedStatusCounts() {
+        var counts = new long[Status.values().length];
+        draft.selectedRows(preview.rows()).forEach(p -> counts[p.status().ordinal()]++);
+        return counts;
+    }
+
     private void updateSelection() {
         if (preview == null || applyButton == null || manualButton == null) return;
-        long safe = selected.stream().map(preview::find).filter(p -> p != null && p.status() == Status.SAFE).count();
-        long toManual = selected.stream().map(preview::find)
-                .filter(p -> p != null && p.status() != Status.SKIPPED && p.status() != Status.ALREADY_MANUAL).count();
-        long alreadyManual = selected.stream().map(preview::find)
-                .filter(p -> p != null && p.status() == Status.ALREADY_MANUAL).count();
-        long processed = selected.stream().map(preview::find)
-                .filter(p -> p != null && p.status() == Status.SKIPPED).count();
+        var counts = selectedStatusCounts();
+        long safe = counts[Status.SAFE.ordinal()];
+        long toManual = safe + counts[Status.REVIEW.ordinal()] + counts[Status.NO_CONTRACT.ordinal()];
+        long alreadyManual = counts[Status.ALREADY_MANUAL.ordinal()];
+        long processed = counts[Status.SKIPPED.ordinal()];
         selectionLabel.setText("Выбрано: " + selected.size() + " · авто: " + safe
                 + " · в ручной разбор: " + toManual + " · уже в очереди: " + alreadyManual
                 + " · недоступно: " + processed);
@@ -389,8 +458,8 @@ public class MatchingView extends Div implements BeforeEnterObserver {
                 ? "Все выбранные операции уже находятся на ручном разборе. Повторная отправка не нужна; открыть очередь можно через меню слева."
                 : selectionHint.getText());
         selectionLabel.getElement().setAttribute("title", selectionLabel.getText());
-        applyButton.setEnabled(safe > 0 && !busy && !stale);
-        manualButton.setEnabled(toManual > 0 && !busy && !stale);
+        applyButton.setEnabled(safe > 0 && !busy && !stale && !analysisRunning());
+        manualButton.setEnabled(toManual > 0 && !busy && !stale && !analysisRunning());
         clearButton.setEnabled(!selected.isEmpty() && !busy);
         if (selectResultsButton != null)
             selectResultsButton.setEnabled(!busy && !stale && selected.size() < preview.rows().size());
@@ -406,15 +475,18 @@ public class MatchingView extends Div implements BeforeEnterObserver {
     }
 
     private void confirm(boolean manual) {
-        if (preview == null || selected.isEmpty() || busy) return;
+        refreshUser();
+        if (preview == null || selected.isEmpty() || busy || analysisRunning()) return;
         if (isStale()) { AppNotifications.warning("Предпросмотр устарел", "Обновите предложения перед массовым действием."); return; }
-        Set<String> chosen = Set.copyOf(selected);
+        Set<String> chosen = draft.selectionSnapshot();
         Preview confirmedPreview = preview;
-        long safe = chosen.stream().map(preview::find).filter(p -> p != null && p.status() == Status.SAFE).count();
-        long review = chosen.stream().map(preview::find).filter(p -> p != null && p.status() == Status.REVIEW).count();
-        long noContract = chosen.stream().map(preview::find).filter(p -> p != null && p.status() == Status.NO_CONTRACT).count();
-        long queued = chosen.stream().map(preview::find).filter(p -> p != null && p.status() == Status.ALREADY_MANUAL).count();
-        long processed = chosen.stream().map(preview::find).filter(p -> p != null && p.status() == Status.SKIPPED).count();
+        long confirmedEmployee = DemoSession.employeeGeneration();
+        var counts = selectedStatusCounts();
+        long safe = counts[Status.SAFE.ordinal()];
+        long review = counts[Status.REVIEW.ordinal()];
+        long noContract = counts[Status.NO_CONTRACT.ordinal()];
+        long queued = counts[Status.ALREADY_MANUAL.ordinal()];
+        long processed = counts[Status.SKIPPED.ordinal()];
         long manualEligible = safe + review + noContract;
         long applicable = manual ? manualEligible : safe;
         if (applicable == 0) {
@@ -440,10 +512,13 @@ public class MatchingView extends Div implements BeforeEnterObserver {
                 UiParts.text("muted", "Перед применением состояние будет проверено повторно. Отмена ничего не меняет.")));
         AtomicBoolean handled = new AtomicBoolean();
         Button submit = UiParts.button("app-action app-action--primary", "Подтвердить", () -> {
-            if (busy || !handled.compareAndSet(false, true)) return;
+            if (!dialog.isOpened() || busy || !handled.compareAndSet(false, true)) return;
             busy = true;
             updateSelection();
             try {
+                DemoSession.requireSameEmployeeGeneration(confirmedEmployee);
+                if (confirmedPreview != preview || isStale() || analysisRunning())
+                    throw new IllegalStateException("Предпросмотр изменился. Проверьте выбор и подтвердите заново.");
                 var result = manual ? matching.sendToManual(state, confirmedPreview, chosen, currentInitiator())
                         : matching.apply(state, confirmedPreview, chosen, currentInitiator());
                 dialog.close();
@@ -452,17 +527,14 @@ public class MatchingView extends Div implements BeforeEnterObserver {
                                 + "; без изменения: " + result.skipped() + " · " + result.runId());
                 UI.getCurrent().getChildren().filter(MainLayout.class::isInstance)
                         .map(MainLayout.class::cast).forEach(MainLayout::refreshDemoCounts);
-                preview = matching.preview(state, preview.from(), preview.to(),
-                        preview.includeProcessed(), preview.includeManual());
-                draft.save(preview, currentInitiator());
-                renderResults();
+                refreshPreview();
             } catch (IllegalArgumentException | IllegalStateException ex) {
                 dialog.close();
                 AppNotifications.warning("Действие не выполнено", ex.getMessage());
             } finally { busy = false; updateSelection(); }
         });
         dialog.getFooter().add(UiParts.button("app-action app-action--secondary", "Отмена", dialog::close), submit);
-        dialog.open();
+        UiParts.openDialog(this, dialog);
     }
 
     private String currentInitiator() {
@@ -478,13 +550,21 @@ public class MatchingView extends Div implements BeforeEnterObserver {
         return displayed.isEmpty() ? displayed : Character.toUpperCase(displayed.charAt(0)) + displayed.substring(1);
     }
     private boolean isStale() {
-        return preview != null && (preview.fingerprint() != matching.fingerprint(state, preview.from(), preview.to())
-                || !java.util.Objects.equals(preview.from(), from.getValue())
+        return preview != null && (!java.util.Objects.equals(preview.from(), from.getValue())
                 || !java.util.Objects.equals(preview.to(), to.getValue())
                 || preview.includeProcessed() != includeProcessed.getValue()
-                || preview.includeManual() != includeManual.getValue());
+                || preview.includeManual() != includeManual.getValue()
+                || preview.revision() != state.revision() && sourceChanged(preview));
     }
 
+    // SQL membership is always rechecked inside the confirmation transaction.
+    private boolean sourceChanged(Preview candidate) {
+        try {
+            return candidate.fingerprint() != matching.fingerprint(state, candidate.from(), candidate.to());
+        } catch (IllegalStateException | IllegalArgumentException unavailable) {
+            return true;
+        }
+    }
     private String staleReason() {
         if (!java.util.Objects.equals(preview.from(), from.getValue())
                 || !java.util.Objects.equals(preview.to(), to.getValue())

@@ -29,6 +29,12 @@ public final class DemoPermissions {
 
     public static Action manualAction(DemoDataService.Operation operation,
                                       DemoDataService.Contract contract, DemoOperationState state) {
+        var decision = state.analysis(operation.id());
+        if (decision != null && contract.id().startsWith("DB-")) {
+            boolean safe = decision.status() == ru.urfu.alphamatcher.experiment.MatchingModel.Status.SAFE
+                    && contract.id().equals("DB-" + decision.proposedContractId()) && state.previousContract(operation.id()) == null;
+            return safe ? Action.MANUAL_CLEAR : Action.MANUAL_COMPLEX;
+        }
         boolean clear = operation.candidates().size() == 1
                 && operation.candidates().contains(contract.id())
                 && contract.payer().equals(operation.payer().name())

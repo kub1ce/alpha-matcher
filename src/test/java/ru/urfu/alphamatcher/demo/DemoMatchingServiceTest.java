@@ -12,7 +12,16 @@ import org.junit.jupiter.api.Test;
 import ru.urfu.alphamatcher.demo.DemoMatchingService.Status;
 
 class DemoMatchingServiceTest {
-    private final DemoDataService data = new DemoDataService();
+    @Test
+    void emptyOfflinePeriodDoesNotPretendToBeAnEngineResult() {
+        var offline = new DemoDataService();
+        var state = new DemoOperationState(java.util.List.of());
+        var day = java.time.LocalDate.of(2026, 10, 1);
+        assertThrows(IllegalStateException.class, () -> new DemoMatchingService(offline).preview(state, day, day, true));
+        assertTrue(state.batchRuns().isEmpty());
+        assertTrue(state.auditEvents().isEmpty());
+    }
+    private final DemoDataService data = new ru.urfu.alphamatcher.demo.EngineStubDataService();
     private final DemoMatchingService matching = new DemoMatchingService(data);
     private final DemoManualReviewService review = new DemoManualReviewService(data);
     private final DemoContractService contracts = new DemoContractService(data);
@@ -39,7 +48,7 @@ class DemoMatchingServiceTest {
     }
 
     @Test
-    void safeOnlyRequiresExplicitContractAndConsistentParties() {
+    void workflowUsesProvidedDecisionsAndPreservesManualQueue() {
         assertTrue(matching.loadTestBatch(state));
         assertFalse(matching.loadTestBatch(state));
         var preview = matching.preview(state, from, to, false);
@@ -120,7 +129,7 @@ class DemoMatchingServiceTest {
         assertEquals(2, result.sentManual());
         assertEquals(1, result.skipped());
         assertEquals(8, review.pendingCount(state));
-        assertEquals("Передано сотрудником из предпросмотра",
+        assertEquals(preview.find("PAY-2026-000196").reason(),
                 review.reason(state.operation("PAY-2026-000196"), state));
         assertFalse(state.isManualQueued("PAY-2026-000184"));
         var current = matching.preview(state, from, to, true);

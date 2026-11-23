@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 import ru.urfu.alphamatcher.demo.DemoDataService.Contract;
@@ -18,6 +17,7 @@ public class DemoClientService {
     public record Page(List<Party> rows, int total, int page, int pages) { }
     public record RelatedContract(Contract contract, List<String> roles) { }
     public record RelatedOperation(Operation operation, List<String> roles) { }
+    public record RelatedOperationPage(List<RelatedOperation> rows, int total, int page) { }
 
     private final DemoDataService data;
 
@@ -28,7 +28,7 @@ public class DemoClientService {
     }
 
     public Page search(Query query, int requestedPage, int pageSize, DemoOperationState state) {
-        String needle = normalize(query.search());
+        String needle = DemoContractService.normalizedText(query.search());
         Comparator<Party> comparator = switch (query.sort()) {
             case "name" -> Comparator.comparing(Party::name);
             case "type" -> Comparator.comparing(Party::type).thenComparing(Party::id);
@@ -41,7 +41,7 @@ public class DemoClientService {
         };
         if (query.descending()) comparator = comparator.reversed();
         List<Party> filtered = data.parties(state).stream()
-                .filter(p -> normalize(p.id() + " " + p.name() + " " + p.inn()).contains(needle))
+                .filter(p -> matches(p, needle))
                 .filter(p -> query.type() == null || query.type().isBlank() || p.type().equals(query.type()))
                 .filter(p -> switch (query.affiliation() == null ? "" : query.affiliation()) {
                     case "bank" -> p.bankClient();
@@ -60,11 +60,9 @@ public class DemoClientService {
             List<String> roles = contractRoles(contract, clientId);
             if (!roles.isEmpty()) related.put(contract.id(), new RelatedContract(contract, roles));
         }
-        for (Operation operation : state.all()) {
-            if (!clientId.equals(operation.payer().id()) && !clientId.equals(operation.recipient().id())) continue;
-            DemoOperationState.Match match = state.match(operation.id());
-            if (match == null || related.containsKey(match.contractId())) continue;
-            Contract contract = data.contract(match.contractId());
+        for (String contractId : data.clientOperationContracts(clientId,state)) {
+            if (related.containsKey(contractId)) continue;
+            Contract contract = data.contract(contractId);
             if (contract != null) related.put(contract.id(),
                     new RelatedContract(contract, List.of("Связь через операцию")));
         }
@@ -74,18 +72,38 @@ public class DemoClientService {
     public List<RelatedOperation> operations(String clientId, DemoOperationState state) {
         List<RelatedOperation> related = new ArrayList<>();
         for (Operation operation : state.all()) {
-            List<String> roles = new ArrayList<>();
-            if (clientId.equals(operation.payer().id())) roles.add("Плательщик");
-            if (clientId.equals(operation.recipient().id())) roles.add("Получатель");
-            DemoOperationState.Match match = state.match(operation.id());
-            Contract contract = match == null ? null : data.contract(match.contractId());
-            if (contract != null && contract.beneficiary() != null
-                    && clientId.equals(contract.beneficiary().id())) roles.add("Выгодоприобретатель");
-            if (!roles.isEmpty()) related.add(new RelatedOperation(operation, List.copyOf(roles)));
+            var row=relatedOperation(clientId,state,operation);
+            if (!row.roles().isEmpty()) related.add(row);
         }
         related.sort(Comparator.comparing((RelatedOperation row) -> row.operation().timestamp()).reversed()
                 .thenComparing(row -> row.operation().id()));
         return List.copyOf(related);
+    }
+
+    public RelatedOperationPage operationPage(String clientId, DemoOperationState state, int requested, int size) {
+        var beneficiaryContracts=data.contracts().stream()
+                .filter(contract -> contract.beneficiary()!=null && clientId.equals(contract.beneficiary().id()))
+                .map(Contract::id).collect(java.util.stream.Collectors.toUnmodifiableSet());
+        var page=data.clientOperations(clientId,beneficiaryContracts,state,requested,size);
+        return new RelatedOperationPage(page.rows().stream()
+                .map(operation -> relatedOperation(clientId,state,operation)).toList(),page.total(),page.page());
+    }
+
+    private RelatedOperation relatedOperation(String clientId, DemoOperationState state, Operation operation) {
+        List<String> roles = new ArrayList<>();
+        if (clientId.equals(operation.payer().id())) roles.add("Плательщик");
+        if (clientId.equals(operation.recipient().id())) roles.add("Получатель");
+        String contractId=relatedContractId(operation,state);
+        Contract contract=contractId.isEmpty()?null:data.contract(contractId);
+        if (contract != null && contract.beneficiary() != null
+                && clientId.equals(contract.beneficiary().id())) roles.add("Выгодоприобретатель");
+        return new RelatedOperation(operation,List.copyOf(roles));
+    }
+
+    public String relatedContractId(Operation operation,DemoOperationState state) {
+        if (!operation.sourceVersion().isEmpty()) return operation.initialContract();
+        var match=state.match(operation.id());
+        return match==null?"":match.contractId();
     }
 
     public List<String> contractRoles(Contract contract, String clientId) {
@@ -97,7 +115,10 @@ public class DemoClientService {
         return List.copyOf(roles);
     }
 
-    private static String normalize(String value) {
-        return value == null ? "" : value.toLowerCase(Locale.ROOT).trim();
+    private static boolean matches(Party party, String needle) {
+        if (needle.isEmpty()) return true;
+        if (needle.chars().allMatch(c -> c >= '0' && c <= '9')) return needle.equals(party.inn());
+        return DemoContractService.normalizedText(party.name()).contains(needle)
+                || DemoContractService.normalizedText(party.id()).equals(needle);
     }
 }
