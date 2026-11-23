@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Profile;
 
 /** V1 is immutable and explicitly uses alpha_matcher. Check before Flyway writes anything. */
 @Configuration(proxyBeanMethods = false)
-@Profile("!demo")
+@Profile("!demo & !jdbc-demo")
 public class FlywayMigrationConfiguration {
     private static final String SCHEMA = "alpha_matcher";
 

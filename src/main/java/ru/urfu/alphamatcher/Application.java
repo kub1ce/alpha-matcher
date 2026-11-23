@@ -20,6 +20,7 @@ public class Application implements AppShellConfigurator {
 
     @Override
     public void configurePage(AppShellSettings settings) {
+        settings.addFavIcon("icon", "favicon.ico", "32x32");
         settings.addInlineWithContents(TargetElement.HEAD, Inline.Position.PREPEND, """
                 (function () {
                   let preference = null;

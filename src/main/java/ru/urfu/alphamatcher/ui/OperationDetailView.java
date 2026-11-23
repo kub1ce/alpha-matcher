@@ -3,6 +3,8 @@ package ru.urfu.alphamatcher.ui;
 import java.util.List;
 import java.util.Map;
 import java.time.format.DateTimeFormatter;
+import com.vaadin.flow.component.UI;
+import com.vaadin.flow.component.UIDetachedException;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.icon.VaadinIcon;
@@ -17,6 +19,7 @@ import com.vaadin.flow.router.RouterLink;
 import ru.urfu.alphamatcher.demo.DemoDataService;
 import ru.urfu.alphamatcher.demo.DemoOperationState;
 import ru.urfu.alphamatcher.demo.DemoPermissions;
+import ru.urfu.alphamatcher.demo.DemoSession;
 import ru.urfu.alphamatcher.demo.DemoPermissions.Action;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
@@ -29,17 +32,21 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
     private final boolean demoMode;
     private DemoDataService.Operation operation;
     private String returnSource;
+    private long analysisGeneration;
+    private Thread analysisThread;
 
     public OperationDetailView(DemoDataService data, Environment environment) {
         this.data = data;
         state = data.state();
         DemoStateUpdates.bind(this, state, this::refreshPermissions);
-        demoMode = environment.acceptsProfiles(Profiles.of("demo"));
+        addDetachListener(event -> cancelAnalysis(event.getUI()));
+        demoMode = environment.acceptsProfiles(Profiles.of("demo", "jdbc-demo"));
         setClassName("operation-detail-page app-page");
     }
 
     @Override
     public void beforeEnter(BeforeEnterEvent event) {
+        getUI().ifPresent(this::cancelAnalysis);
         operation = state.operation(event.getRouteParameters().get("id").orElse(""));
         if (operation == null) { event.rerouteTo(NotFoundView.class); return; }
         returnSource = event.getLocation().getQueryParameters().getParameters()
@@ -152,7 +159,60 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
                             DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"))),
                     field("Первоначальная причина разбора", match.reviewReason())));
         }
+        result.add(UiParts.text("muted", "Статус операции в источнике: " + data.operationStatus(operation.id())),
+                EngineDecisionDetails.render(state.analysis(operation.id()), data));
+        var analyze = UiParts.button("app-action app-action--secondary", "Выполнить полный анализ", () -> analyze(false));
+        analyze.setEnabled(analysisThread == null);
+        result.add(analyze);
+        if (data.hasMatchingSource()) {
+            var repeat = UiParts.button("app-action app-action--secondary", "Повторный анализ", () -> analyze(true));
+            repeat.setEnabled(analysisThread == null);
+            result.add(repeat);
+            if (state.repeatedAnalysis(operation.id()))
+                result.add(UiParts.text("muted", "Повторный анализ выполнен для пересмотра. Исходный статус и текущая привязка сохранены."));
+        }
         return result;
+    }
+
+    private void analyze(boolean repeat) {
+        if (analysisThread != null) return;
+        var ui = UI.getCurrent();
+        long generation = ++analysisGeneration;
+        var shown = operation;
+        String id = shown.id();
+        ui.setPollInterval(1000);
+        analysisThread = Thread.ofVirtual().name("operation-analysis").start(() -> {
+            ru.urfu.alphamatcher.experiment.MatchingModel.Decision decision = null;
+            RuntimeException failure = null;
+            try { decision = repeat ? data.reanalyze(shown) : data.analyze(shown); }
+            catch (RuntimeException error) { failure = error; }
+            var result = decision;
+            var error = failure;
+            try {
+                ui.access(() -> {
+                    if (generation != analysisGeneration || !isAttached() || !operation.id().equals(id)) return;
+                    analysisThread = null;
+                    ui.setPollInterval(-1);
+                    if (error != null) AppNotifications.warning("Анализ недоступен", error.getMessage());
+                    else try {
+                        data.requireCurrentOperation(shown);
+                        state.analysis(id, result, repeat);
+                    } catch (IllegalStateException changed) {
+                        AppNotifications.warning("Анализ устарел", changed.getMessage());
+                    }
+                    render();
+                });
+            } catch (UIDetachedException ignored) { }
+        });
+        render();
+    }
+
+    private void cancelAnalysis(UI ui) {
+        if (analysisThread == null) return;
+        analysisGeneration++;
+        analysisThread.interrupt();
+        analysisThread = null;
+        ui.setPollInterval(-1);
     }
 
     private Div historyCard() {
@@ -204,7 +264,9 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
     }
 
     private List<String> candidates() {
-        java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>(operation.candidates());
+        var decision = state.analysis(operation.id());
+        java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>(decision == null ? java.util.List.of()
+                : decision.candidateIds().stream().map(data::contractReference).toList());
         String previous = state.previousContract(operation.id());
         if (previous != null) ids.add(previous);
         return List.copyOf(ids);
@@ -219,10 +281,7 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
             AppNotifications.warning("Подтверждение устарело", "Привязка операции изменилась. Проверьте текущее состояние.");
             return;
         }
-        List<String> ids = data.contracts().stream()
-                .filter(contract -> contract.payer().equals(operation.payer().name())
-                        && contract.recipient().equals(operation.recipient().name()))
-                .map(DemoDataService.Contract::id).toList();
+        List<String> ids = state.contractsForLinkChange(operation.id(), data.contracts());
         if (ids.isEmpty()) {
             AppNotifications.warning("Нет подходящих договоров", "Для смены связи проверьте стороны операции и договора.");
             return;
@@ -230,6 +289,9 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
         contractDialog("Изменить договор", ids, expected);
     }
     private void contractDialog(String title, List<String> ids, DemoOperationState.Match expected) {
+        var shown = operation;
+        String confirmedOperation = operation.id();
+        long confirmedEmployee = DemoSession.employeeGeneration();
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle(title);
         Select<String> select = new Select<>();
@@ -248,14 +310,21 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
                 select, justification));
         dialog.getFooter().add(UiParts.button("app-action app-action--secondary", "Отмена", dialog::close),
                 UiParts.button("app-action app-action--primary", "Подтвердить выбор", () -> {
+                    if (!dialog.isOpened()) return;
                     if (!DemoOperationState.hasValidManualJustification(justification.getValue())) {
                         justification.setInvalid(true);
                         justification.setErrorMessage("Укажите обоснование не короче 5 символов");
                         return;
                     }
                     try {
-                        state.changeLinkIfUnchanged(operation.id(), expected, select.getValue(), data.contracts(),
-                                justification.getValue());
+                        requireConfirmationContext(confirmedOperation, confirmedEmployee);
+                        data.confirmAtomically(state, () -> {
+                            data.requireCurrentOperation(shown);
+                            state.changeLinkIfUnchanged(confirmedOperation, expected, select.getValue(), data.contracts(),
+                                    justification.getValue());
+                            return null;
+                        });
+                        operation = state.operation(confirmedOperation);
                         dialog.close(); render();
                         AppNotifications.success("Договор привязан", operation.id() + " · " + select.getValue());
                     } catch (IllegalArgumentException | IllegalStateException ex) {
@@ -263,7 +332,7 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
                         AppNotifications.error("Не удалось изменить договор", ex.getMessage());
                     }
                 }));
-        dialog.open();
+        UiParts.openDialog(this, dialog);
     }
     private void unlinkContract() {
         if (!demoWritable()) return;
@@ -275,10 +344,19 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
             return;
         }
         String id = expected.contractId();
+        var shown = operation;
+        String confirmedOperation = operation.id();
+        long confirmedEmployee = DemoSession.employeeGeneration();
         confirmation("Отвязать договор", "Убрать привязку " + id + " от операции " + operation.id() + "?",
                 "Отвязать", () -> {
                     try {
-                        state.unlinkIfUnchanged(operation.id(), expected);
+                        requireConfirmationContext(confirmedOperation, confirmedEmployee);
+                        data.confirmAtomically(state, () -> {
+                            data.requireCurrentOperation(shown);
+                            state.unlinkIfUnchanged(confirmedOperation, expected);
+                            return null;
+                        });
+                        operation = state.operation(confirmedOperation);
                         render();
                         AppNotifications.info("Договор отвязан", operation.id() + " · " + id);
                     } catch (IllegalArgumentException | IllegalStateException ex) {
@@ -287,13 +365,22 @@ public class OperationDetailView extends Div implements BeforeEnterObserver {
                     }
                 });
     }
+    private void requireConfirmationContext(String confirmedOperation, long confirmedEmployee) {
+        DemoSession.requireSameEmployeeGeneration(confirmedEmployee);
+        if (operation == null || !confirmedOperation.equals(operation.id()))
+            throw new IllegalStateException("Подтверждение устарело. Открыта другая операция.");
+    }
     private void confirmation(String title, String message, String action, Runnable confirmed) {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle(title);
         dialog.add(UiParts.text("detail-dialog-text", message));
         dialog.getFooter().add(UiParts.button("app-action app-action--secondary", "Отмена", dialog::close),
-                UiParts.button("app-action app-action--primary", action, () -> { dialog.close(); confirmed.run(); }));
-        dialog.open();
+                UiParts.button("app-action app-action--primary", action, () -> {
+                    if (!dialog.isOpened()) return;
+                    dialog.close();
+                    confirmed.run();
+                }));
+        UiParts.openDialog(this, dialog);
     }
     private boolean demoWritable() {
         if (demoMode) return true;

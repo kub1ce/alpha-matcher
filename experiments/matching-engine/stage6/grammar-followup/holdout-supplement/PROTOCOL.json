@@ -1,8 +1,0 @@
-{
-  "humanExpertOracle": false,
-  "externalBlind": false,
-  "engineUnchanged": true,
-  "oracleNotEngineDerived": true,
-  "why": "Supplement independently covers duplicate FULL FIO with different IDs/INNs, unknown provenance and actual JDBC/transaction faults; original34 first results remain unchanged. No engine tuning.",
-  "cases": 14
-}

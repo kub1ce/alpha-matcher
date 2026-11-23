@@ -8,6 +8,7 @@ import java.util.List;
 
 public final class DemoSession {
     private static final String USER = "demo-user";
+    private static final String USER_GENERATION = "demo-user-generation";
     private static final String MATCHING_DRAFT = "demo-matching-draft";
     private static final String USER_LISTENERS = "demo-user-listeners";
     private DemoSession() { }
@@ -17,6 +18,16 @@ public final class DemoSession {
         return user == null ? null : user.role();
     }
     public static DemoUser user() { return (DemoUser) VaadinSession.getCurrent().getAttribute(USER); }
+
+    public static long employeeGeneration() {
+        Long current = (Long) VaadinSession.getCurrent().getAttribute(USER_GENERATION);
+        return current == null ? 0 : current;
+    }
+
+    public static void requireSameEmployeeGeneration(long expected) {
+        if (user() == null || employeeGeneration() != expected)
+            throw new IllegalStateException("Пользователь сменился. Оформите подтверждение заново.");
+    }
     public static DemoMatchingDraft matchingDraft() {
         UI ui = java.util.Objects.requireNonNull(UI.getCurrent(), "Нет текущей вкладки");
         DemoMatchingDraft draft = ComponentUtil.getData(ui, DemoMatchingDraft.class);
@@ -24,6 +35,7 @@ public final class DemoSession {
             draft = new DemoMatchingDraft();
             ComponentUtil.setData(ui, DemoMatchingDraft.class, draft);
         }
+        draft.bindSelectionToEmployee(employeeGeneration());
         return draft;
     }
 
@@ -31,12 +43,14 @@ public final class DemoSession {
         VaadinSession session = VaadinSession.getCurrent();
         DemoUser next = DemoUser.forRole(role);
         if (next.equals(session.getAttribute(USER))) return;
+        session.setAttribute(USER_GENERATION, employeeGeneration() + 1);
         session.setAttribute(USER, next);
         notifyUserChanged(session);
     }
 
     public static void logout() {
         VaadinSession session = VaadinSession.getCurrent();
+        session.setAttribute(USER_GENERATION, employeeGeneration() + 1);
         session.setAttribute(USER, null);
         notifyUserChanged(session);
         session.setAttribute(MATCHING_DRAFT, null);

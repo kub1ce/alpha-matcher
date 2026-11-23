@@ -17,10 +17,10 @@ final class ClientNavigation {
     }
 
     static RouterLink back(String source) {
-        if (source != null && source.matches("contract/AG-2026-[0-9]{3}"))
+        if (source != null && source.matches("contract/(?:AG-2026-[0-9]{3}|DB-[0-9]{1,19})"))
             return new RouterLink("", ContractDetailView.class,
                     new RouteParameters("id", source.substring("contract/".length())));
-        if (source != null && source.matches("operation/PAY-2026-[0-9]{6}"))
+        if (source != null && source.matches("operation/[A-Za-z0-9_-]{1,64}"))
             return new RouterLink("", OperationDetailView.class,
                     new RouteParameters("id", source.substring("operation/".length())));
         return new RouterLink("", ClientsView.class);

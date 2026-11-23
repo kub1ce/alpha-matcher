@@ -4,8 +4,9 @@ import java.util.List;
 
 public record ParseResult(String originalText, Field fullNames, Field inns, Field contracts,
                           Field organizations, boolean thirdPartyMentioned,
-                          List<Diagnostic> diagnostics) {
-    public enum Status { FOUND, NOT_FOUND, AMBIGUOUS, INVALID }
+                          List<Diagnostic> diagnostics,
+                          ru.urfu.alphamatcher.experiment.PurposeParser.Features features) {
+    public enum Status { FOUND, MULTIPLE, NOT_FOUND, AMBIGUOUS, INVALID }
     public enum Kind { EXTRACTED, REVIEW, MISSING, FORMAT }
 
     public record Field(Status status, List<String> values, List<String> invalidValues) {

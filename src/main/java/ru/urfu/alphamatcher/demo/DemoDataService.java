@@ -1,14 +1,54 @@
 package ru.urfu.alphamatcher.demo;
 
 import java.math.BigDecimal;
+import java.text.NumberFormat;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import com.vaadin.flow.server.VaadinSession;
 
 @Service
 public class DemoDataService {
+    public DemoOperationState.Page linkedOperations(String contractId, DemoOperationState state, int requested, int size) {
+        return operationPage(state.all().stream().filter(op -> {
+            var match=state.match(op.id());
+            return match!=null && contractId.equals(match.contractId());
+        }).sorted(Comparator.comparing(Operation::timestamp).reversed()).toList(),requested,size);
+    }
+
+    public int linkedCount(String contractId, DemoOperationState state) {
+        return Math.toIntExact(state.confirmedMatches().values().stream()
+                .filter(match -> contractId.equals(match.contractId())).count());
+    }
+
+    public DemoOperationState.Page clientOperations(String clientId, Set<String> beneficiaryContracts,
+                                                     DemoOperationState state, int requested, int size) {
+        return operationPage(state.all().stream().filter(op -> {
+            if (clientId.equals(op.payer().id()) || clientId.equals(op.recipient().id())) return true;
+            var match=state.match(op.id());
+            return match!=null && beneficiaryContracts.contains(match.contractId());
+        }).sorted(Comparator.comparing(Operation::timestamp).reversed().thenComparing(Operation::id)).toList(),
+                requested,size);
+    }
+
+    public List<String> clientOperationContracts(String clientId, DemoOperationState state) {
+        return state.all().stream().filter(op -> clientId.equals(op.payer().id()) || clientId.equals(op.recipient().id()))
+                .map(op -> state.match(op.id())).filter(java.util.Objects::nonNull)
+                .map(DemoOperationState.Match::contractId).distinct().toList();
+    }
+
+    private static DemoOperationState.Page operationPage(List<Operation> operations, int requested, int size) {
+        int pages=Math.max(1,Math.ceilDiv(operations.size(),size));
+        int page=Math.min(Math.max(0,requested),pages-1);
+        int start=page*size;
+        return new DemoOperationState.Page(List.copyOf(operations.subList(start,
+                (int)Math.min(operations.size(),start+(long)size))),operations.size(),page,pages);
+    }
+
     public record Party(String id, String name, String type, String inn, String account, String bic,
                         String pin, boolean bankClient, boolean terroristOrExtremistListed) implements java.io.Serializable {
         public Party(String id, String name, String type, String inn, String account, String bic, String pin) {
@@ -30,7 +70,14 @@ public class DemoDataService {
     public record Operation(String id, LocalDateTime timestamp, Party payer, Party recipient,
                             BigDecimal amount, String purpose, String initialContract, String initialMethod,
                             String reason, List<String> candidates, String initialJustification,
-                            String initialActor, LocalDateTime initialDecisionAt) implements java.io.Serializable {
+                            String initialActor, LocalDateTime initialDecisionAt, String sourceVersion) implements java.io.Serializable {
+        public Operation(String id, LocalDateTime timestamp, Party payer, Party recipient,
+                         BigDecimal amount, String purpose, String initialContract, String initialMethod,
+                         String reason, List<String> candidates, String initialJustification,
+                         String initialActor, LocalDateTime initialDecisionAt) {
+            this(id, timestamp, payer, recipient, amount, purpose, initialContract, initialMethod,
+                    reason, candidates, initialJustification, initialActor, initialDecisionAt, "");
+        }
         public Operation(String id, LocalDateTime timestamp, Party payer, Party recipient,
                          BigDecimal amount, String purpose, String initialContract, String initialMethod,
                          String reason, List<String> candidates) {
@@ -38,7 +85,12 @@ public class DemoDataService {
                     reason, candidates, "", "", null);
         }
         public String date() { return timestamp.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")); }
-        public String amountText() { return String.format("%,.0f ₽", amount).replace(',', ' '); }
+        public String amountText() {
+            BigDecimal displayed = amount.stripTrailingZeros();
+            NumberFormat format = NumberFormat.getNumberInstance(Locale.forLanguageTag("ru-RU"));
+            format.setMaximumFractionDigits(Math.max(0, displayed.scale()));
+            return format.format(displayed) + " ₽";
+        }
     }
     public record ManualItem(String operationId, String payer, String amount, String reason) { }
     public record Run(String id, String date, int total, int matched, int manual) { }
@@ -185,6 +237,19 @@ public class DemoDataService {
         return DEMO_PARTIES.stream().filter(p -> p.name().equals(name)).findFirst().orElseThrow();
     }
 
+    public ru.urfu.alphamatcher.experiment.MatchingModel.Decision analyze(String operationReference) {
+        throw new IllegalStateException("Полный анализ недоступен: включите профиль jdbc-demo с изолированной тестовой MySQL. Проверка парсинга работает без БД.");
+    }
+    public ru.urfu.alphamatcher.experiment.MatchingModel.Decision analyze(Operation operation) { return analyze(operation.id()); }
+    public ru.urfu.alphamatcher.experiment.MatchingModel.Decision reanalyze(Operation operation) { return analyze(operation); }
+    public <T> T confirmAtomically(DemoOperationState state, java.util.function.Supplier<T> action) { return state.atomically(action); }
+    public <T> T readMatchingSnapshot(java.util.function.Supplier<T> action) { return action.get(); }
+    public void requireCurrentOperation(Operation shown) { }
+    public String contractReference(long databaseId) { return "DB-" + databaseId; }
+    public boolean hasMatchingSource() { return false; }
+    public String operationStatus(String reference) { return "LOADED"; }
+    public String sourceLabel() { return "Тестовая среда"; }
+
     public DemoOperationState state() {
         VaadinSession session = VaadinSession.getCurrent();
         if (session == null) return new DemoOperationState(FIXTURES);
@@ -199,6 +264,11 @@ public class DemoDataService {
     List<Operation> originalFixtures() { return ORIGINAL_FIXTURES; }
     public List<Contract> contracts() { return CONTRACTS; }
     public Contract contract(String id) { return CONTRACTS.stream().filter(c -> c.id().equals(id)).findFirst().orElse(null); }
+    public String contractNumber(Contract contract) { return contract.id(); }
+    public String contractDescription(Contract contract) { return contract.name(); }
+    public Party contractParty(Contract contract, boolean payer, DemoOperationState state) {
+        return client(payer ? contract.payerId() : contract.recipientId(), state);
+    }
     public Party party(String name) {
         return PARTIES.stream().filter(p -> p.name().equals(name)).findFirst().orElse(null);
     }
@@ -223,8 +293,14 @@ public class DemoDataService {
             .sorted(java.util.Comparator.comparing(Operation::timestamp).reversed()).limit(6).toList(); }
     public List<ManualItem> manualItems() { return manualItems(state()); }
     public List<ManualItem> manualItems(DemoOperationState state) {
+        return manualItems(state, state.queuedOperations());
+    }
+    public List<ManualItem> recentManualItems(DemoOperationState state, int limit) {
+        return manualItems(state, state.queuedOperations(limit));
+    }
+    private List<ManualItem> manualItems(DemoOperationState state, List<Operation> queued) {
         List<ManualItem> items = new ArrayList<>();
-        for (Operation op : state.all()) {
+        for (Operation op : queued) {
             if (state.isManualQueued(op.id())) {
                 String reason = state.manualReason(op.id()) != null ? state.manualReason(op.id())
                         : op.reason().isBlank() ? "Договор отвязан сотрудником" : op.reason();

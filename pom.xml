@@ -33,6 +33,11 @@
     
     <dependencies>
         <dependency>
+            <groupId>ru.urfu.alphamatcher</groupId>
+            <artifactId>matching-engine-optimized</artifactId>
+            <version>1.2.5-m68-br</version>
+        </dependency>
+        <dependency>
             <groupId>com.vaadin</groupId>
             <!-- Replace artifactId with vaadin-core to use only free components -->
             <artifactId>vaadin</artifactId>
@@ -97,6 +102,16 @@
     </build>
     
     <repositories>
+        <repository>
+            <id>alpha-matcher-accepted</id>
+            <url>file:${project.basedir}/vendor/maven</url>
+            <releases>
+                <checksumPolicy>fail</checksumPolicy>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
         <repository>
             <id>central</id>
             <url>https://repo.maven.apache.org/maven2</url>

@@ -7,6 +7,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -23,6 +24,7 @@ public class DemoOperationState implements Serializable {
     public record Query(String text, LocalDate from, LocalDate to, String status, String method,
                         String sort, boolean descending) { }
     public record Page(List<Operation> rows, int total, int page, int pages) { }
+    public record RegistryPage(Page page, int catalogTotal) { }
     public record BatchRun(String id, LocalDateTime time, String initiator,
                            LocalDate from, LocalDate to, int considered, int selected, int eligible,
                            int applied, int manual, int skipped, int withoutContract,
@@ -33,6 +35,35 @@ public class DemoOperationState implements Serializable {
                              String previous, String current, String actor, String method,
                              String runId, String justification, String automaticReason, String reviewReason,
                              String previousJustification, String previousState) implements Serializable { }
+    public record EmployeeSnapshot(Map<String, Match> matches, Map<String, String> previousContracts,
+            Set<String> manualQueue, Map<String, String> manualReasons, List<BatchRun> runs,
+            List<AuditEvent> audit, long nextRunNumber, long revision) implements Serializable { }
+    public synchronized EmployeeSnapshot employeeSnapshot() {
+        return new EmployeeSnapshot(Map.copyOf(matches),Map.copyOf(previousContracts),Set.copyOf(manualQueue),
+                Map.copyOf(manualReasons),List.copyOf(batchRuns),List.copyOf(auditEvents),nextRunNumber,revision + (pendingChange ? 1 : 0));
+    }
+    public synchronized void restoreEmployeeSnapshot(EmployeeSnapshot saved) {
+        for (Operation operation : operations) {
+            Match expected = saved.matches().get(operation.id());
+            if (!Objects.equals(operation.initialContract().isBlank() ? null : operation.initialContract(), expected == null ? null : expected.contractId()))
+                throw new IllegalStateException("Подтверждённые связи MySQL не соответствуют сохранённой истории сотрудников");
+        }
+        if (saved.matches().keySet().stream().anyMatch(id -> operation(id) == null))
+            throw new IllegalStateException("История содержит неизвестные операции");
+        installEmployeeSnapshot(saved);
+    }
+
+    /** For persistent data sources that have compared the complete set of stored links. */
+    protected final synchronized void installEmployeeSnapshot(EmployeeSnapshot saved) {
+        matches.clear(); matches.putAll(saved.matches());
+        previousContracts.clear(); previousContracts.putAll(saved.previousContracts());
+        manualQueue.clear(); manualQueue.addAll(saved.manualQueue());
+        manualReasons.clear(); manualReasons.putAll(saved.manualReasons());
+        batchRuns.clear(); batchRuns.addAll(saved.runs());
+        auditEvents.clear(); auditEvents.addAll(saved.audit());
+        nextRunNumber = saved.nextRunNumber(); revision = saved.revision();
+    }
+
     private static final ZoneId DEMO_ZONE = ZoneId.of("Asia/Yekaterinburg");
     private final List<Operation> operations;
     private final Map<String, Match> matches = new HashMap<>();
@@ -44,6 +75,23 @@ public class DemoOperationState implements Serializable {
     private long nextRunNumber;
     private boolean idsNormalized;
     private long revision;
+    private final Map<String, ru.urfu.alphamatcher.experiment.MatchingModel.Decision> analyses = new HashMap<>();
+    private final Set<String> repeatedAnalyses = new HashSet<>();
+    private final Map<String, DemoMatchingService.Proposal> proposals = new HashMap<>();
+    public synchronized void analysis(String id, ru.urfu.alphamatcher.experiment.MatchingModel.Decision decision) {
+        analysis(id, decision, false);
+    }
+    public synchronized void analysis(String id, ru.urfu.alphamatcher.experiment.MatchingModel.Decision decision,
+                                      boolean repeated) {
+        analyses.put(id, decision);
+        if (repeated) repeatedAnalyses.add(id); else repeatedAnalyses.remove(id);
+    }
+    public synchronized boolean repeatedAnalysis(String id) { return repeatedAnalyses.contains(id); }
+    public synchronized ru.urfu.alphamatcher.experiment.MatchingModel.Decision analysis(String id) { return analyses.get(id); }
+    synchronized void proposal(DemoMatchingService.Proposal proposal) { proposals.put(proposal.operationId(), proposal); }
+    protected void beforeLinkChange(String id, Match previous, String nextContract) { }
+    protected String originalPackage(String id, Match previous) { return null; }
+
     private transient java.util.concurrent.CopyOnWriteArrayList<Runnable> changeListeners;
 
     /** Listeners only enqueue UI work; business mutations never wait for a UI lock. */
@@ -54,7 +102,41 @@ public class DemoOperationState implements Serializable {
         return () -> registered.remove(listener);
     }
 
+    private boolean inAtomicChange;
+    private boolean pendingChange;
+    public synchronized <T> T atomically(java.util.function.Supplier<T> action) {
+        if (inAtomicChange) return action.get();
+        var savedMatches = new HashMap<>(matches);
+        var savedPrevious = new HashMap<>(previousContracts);
+        var savedQueue = new LinkedHashSet<>(manualQueue);
+        var savedReasons = new HashMap<>(manualReasons);
+        var savedRuns = new ArrayList<>(batchRuns);
+        var savedAudit = new ArrayList<>(auditEvents);
+        long savedRevision = revision, savedNumber = nextRunNumber;
+        inAtomicChange = true;
+        pendingChange = false;
+        T result;
+        try {
+            result = action.get();
+        } catch (RuntimeException | Error failure) {
+            matches.clear(); matches.putAll(savedMatches);
+            previousContracts.clear(); previousContracts.putAll(savedPrevious);
+            manualQueue.clear(); manualQueue.addAll(savedQueue);
+            manualReasons.clear(); manualReasons.putAll(savedReasons);
+            batchRuns.clear(); batchRuns.addAll(savedRuns);
+            auditEvents.clear(); auditEvents.addAll(savedAudit);
+            revision = savedRevision; nextRunNumber = savedNumber;
+            pendingChange = false;
+            throw failure;
+        } finally { inAtomicChange = false; }
+        boolean notify = pendingChange;
+        pendingChange = false;
+        if (notify) changed();
+        return result;
+    }
+
     private void changed() {
+        if (inAtomicChange) { pendingChange = true; return; }
         revision++;
         if (changeListeners != null) for (Runnable listener : changeListeners) listener.run();
     }
@@ -82,12 +164,44 @@ public class DemoOperationState implements Serializable {
         }
     }
 
-    public List<Operation> all() { return List.copyOf(operations); }
+    public synchronized List<Operation> all() { return List.copyOf(operations); }
+    public int totalOperations() { return all().size(); }
+    public RegistryPage registry(Query query, int page, int size) {
+        return new RegistryPage(search(query, page, size), totalOperations());
+    }
+    public List<Operation> operationsInPeriod(LocalDate from, LocalDate to) {
+        return all().stream().filter(op -> {
+            var date = op.timestamp().toLocalDate();
+            return !date.isBefore(from) && !date.isAfter(to);
+        }).toList();
+    }
+    public void visitOperationsInPeriod(LocalDate from, LocalDate to, java.util.function.Consumer<Operation> visitor) {
+        operationsInPeriod(from, to).forEach(visitor);
+    }
+    public List<Operation> queuedOperations() {
+        return all().stream().filter(op -> isManualQueued(op.id())).toList();
+    }
+    public List<Operation> queuedOperations(int limit) { return queuedOperations().stream().limit(limit).toList(); }
+    public synchronized Map<String, String> queueReasons() {
+        Map<String, String> reasons = new HashMap<>();
+        for (var op : queuedOperations()) reasons.put(op.id(), Objects.requireNonNullElse(manualReason(op.id()), op.reason()));
+        return reasons;
+    }
+    public synchronized int pendingReviewCount() {
+        return Math.toIntExact(queuedOperations().stream().filter(op ->
+                !Objects.requireNonNullElse(manualReason(op.id()), op.reason()).isBlank()
+                        || manualReason(op.id()) == null && previousContract(op.id()) != null).count());
+    }
+    public synchronized Set<String> queuedIds() { return Set.copyOf(manualQueue); }
+    public synchronized Map<String, Match> confirmedMatches() { return Map.copyOf(matches); }
+    public int durableAutomaticCount() { return 0; }
     public synchronized long revision() { return revision; }
-    public boolean isManualQueued(String id) { return manualQueue.contains(id) && !isLinked(id); }
-    public String manualReason(String id) { return manualReasons.get(id); }
-    public List<BatchRun> batchRuns() { normalizeLegacyIds(); return List.copyOf(batchRuns); }
-    public List<AuditEvent> auditEvents() { normalizeLegacyIds(); return List.copyOf(auditEvents); }
+    public synchronized boolean isManualQueued(String id) { return manualQueue.contains(id) && !isLinked(id); }
+    public synchronized String manualReason(String id) { return manualReasons.get(id); }
+    public synchronized List<BatchRun> batchRuns() { normalizeLegacyIds(); return List.copyOf(batchRuns); }
+    public synchronized List<AuditEvent> auditEvents() { normalizeLegacyIds(); return List.copyOf(auditEvents); }
+    public void visitDurableAudit(boolean descending, java.util.function.Consumer<AuditEvent> visitor) { }
+    public List<String> durableAuditActors() { return List.of(); }
     public List<AuditEvent> auditEventsForOperation(String operationId) {
         if (operationId == null || operation(operationId) == null) return List.of();
         return auditEvents().stream().filter(event -> operationId.equals(event.operationId())).toList();
@@ -194,13 +308,13 @@ public class DemoOperationState implements Serializable {
         }
         return added;
     }
-    public Operation operation(String id) {
+    public synchronized Operation operation(String id) {
         return operations.stream().filter(op -> op.id().equals(id)).findFirst().orElse(null);
     }
     public synchronized Match match(String id) { return matches.get(id); }
-    public String previousContract(String id) { return previousContracts.get(id); }
-    public boolean isLinked(String id) { return matches.containsKey(id); }
-    public int linkedCount() { return matches.size(); }
+    public synchronized String previousContract(String id) { return previousContracts.get(id); }
+    public synchronized boolean isLinked(String id) { return matches.containsKey(id); }
+    public synchronized int linkedCount() { return matches.size(); }
     /** One validation rule for every confirmed manual decision, including direct state calls. */
     public static String validatedManualJustification(String value) {
         if (value == null) throw new IllegalArgumentException("Укажите краткое обоснование решения (не менее 5 символов)");
@@ -233,7 +347,8 @@ public class DemoOperationState implements Serializable {
     public synchronized void link(String operationId, String contractId, String method,
                      List<DemoDataService.Contract> contracts, String justification,
                      String actor, String runId) {
-        DemoPermissions.requireCurrentIfPresent(matches.containsKey(operationId)
+        Match previous = match(operationId);
+        DemoPermissions.requireCurrentIfPresent(previous != null
                 ? DemoPermissions.Action.CHANGE_LINK : "Автоматически".equals(method)
                 ? DemoPermissions.Action.APPLY_SAFE : DemoPermissions.Action.MANUAL_CLEAR);
         actor = DemoPermissions.currentActorOr(actor);
@@ -247,23 +362,17 @@ public class DemoOperationState implements Serializable {
         String automaticReason = "";
         if ("Автоматически".equals(method)) {
             // The same proposal calculation drives the preview and guards the final state mutation.
-            DemoDataService reference = new DemoDataService();
-            var proposal = new DemoMatchingService(reference).propose(operation, this);
-            if (proposal.status() != DemoMatchingService.Status.SAFE
-                    || !contractId.equals(proposal.contractId())
-                    || !contract.equals(reference.contract(contractId)))
-                throw new IllegalStateException("Автоматическая привязка недоступна: предложение не является безопасным");
+            var proposal = proposals.get(operationId);
+            if (proposal == null || proposal.decision() == null
+                    || proposal.decision().status() != ru.urfu.alphamatcher.experiment.MatchingModel.Status.SAFE
+                    || proposal.status() != DemoMatchingService.Status.SAFE || !contractId.equals(proposal.contractId()))
+                throw new IllegalStateException("Автоматическая привязка недоступна: нет актуального SAFE Decision движка");
             if (justification != null && !justification.isBlank() && !justification.equals(proposal.reason()))
                 throw new IllegalStateException("Основание автоматического предложения изменилось");
             automaticReason = proposal.reason();
         }
-        boolean partiesDiffer = !contract.payer().equals(operation.payer().name())
-                || !contract.recipient().equals(operation.recipient().name());
-        if ("Вручную".equals(method) && !matches.containsKey(operationId))
+        if ("Вручную".equals(method) && previous == null)
             DemoPermissions.requireCurrentIfPresent(DemoPermissions.manualAction(operation, contract, this));
-        if (partiesDiffer && !"Вручную".equals(method))
-            throw new IllegalArgumentException("Стороны договора не совпадают со сторонами операции");
-        Match previous = matches.get(operationId);
         if (previous != null && previous.contractId().equals(contractId)
                 && previous.method().equals(method) && previous.justification().equals(explanation)
                 && previous.automaticReason().equals(automaticReason)) return;
@@ -272,6 +381,8 @@ public class DemoOperationState implements Serializable {
         LocalDateTime decisionAt = now();
         Match next = new Match(contractId, method, explanation, automaticReason, actor, decisionAt,
                 reviewReason == null ? "" : reviewReason);
+        String originalRun = originalPackage(operationId, previous);
+        beforeLinkChange(operationId, previous, contractId);
         matches.put(operationId, next);
         previousContracts.remove(operationId);
         manualQueue.remove(operationId);
@@ -280,7 +391,7 @@ public class DemoOperationState implements Serializable {
                         ? ("Автоматически".equals(method) ? "Автоматическая привязка" : "Ручная привязка")
                         : "Изменение договора",
                 previous == null ? (queued ? "Нет договора (ручной разбор)" : "Нет договора")
-                        : previous.contractId(), contractId, actor, method, runId,
+                        : previous.contractId(), contractId, actor, method, originalRun == null ? runId : originalRun,
                 explanation, automaticReason, next.reviewReason(),
                 previous == null ? "" : previous.justification(),
                 previous == null ? (queued ? "Ожидала ручного разбора" : "Не обработана")
@@ -290,11 +401,26 @@ public class DemoOperationState implements Serializable {
     public void unlink(String operationId) {
         unlink(operationId, currentActor());
     }
+
+    public synchronized List<String> contractsForLinkChange(String operationId,
+                                                            List<DemoDataService.Contract> contracts) {
+        Operation operation = operation(operationId);
+        Match current = match(operationId);
+        if (operation == null || current == null) return List.of();
+        String payerId = operation.payer().id(), recipientId = operation.recipient().id();
+        return contracts.stream().filter(contract -> current.contractId().equals(contract.id())
+                || !payerId.isBlank() && !recipientId.isBlank()
+                && payerId.equals(contract.payerId()) && recipientId.equals(contract.recipientId()))
+                .map(DemoDataService.Contract::id).toList();
+    }
+
     /** Compare the complete decision shown by the dialog and mutate under the same lock. */
     public synchronized void changeLinkIfUnchanged(String operationId, Match expected, String contractId,
                                                   List<DemoDataService.Contract> contracts, String justification) {
         DemoPermissions.requireCurrentIfPresent(DemoPermissions.Action.CHANGE_LINK);
         requireExpectedMatch(operationId, expected);
+        if (!contractsForLinkChange(operationId, contracts).contains(contractId))
+            throw new IllegalArgumentException("Стороны нового договора не подтверждены по идентификаторам.");
         link(operationId, contractId, "Вручную", contracts, justification);
     }
 
@@ -305,7 +431,7 @@ public class DemoOperationState implements Serializable {
     }
 
     private void requireExpectedMatch(String operationId, Match expected) {
-        if (expected == null || !expected.equals(matches.get(operationId)))
+        if (expected == null || !expected.equals(match(operationId)))
             throw new IllegalStateException("Подтверждение устарело: привязка операции изменилась. Проверьте текущий договор и повторите действие.");
     }
 
@@ -313,13 +439,16 @@ public class DemoOperationState implements Serializable {
         DemoPermissions.requireCurrentIfPresent(DemoPermissions.Action.UNLINK);
         actor = DemoPermissions.currentActorOr(actor);
         if (operation(operationId) == null) throw new IllegalArgumentException("Неизвестная операция");
-        Match removed = matches.remove(operationId);
+        Match removed = match(operationId);
+        String originalRun = originalPackage(operationId, removed);
+        if (removed != null) beforeLinkChange(operationId, removed, null);
+        matches.remove(operationId);
         if (removed != null) {
             previousContracts.put(operationId, removed.contractId());
             manualQueue.add(operationId);
             manualReasons.put(operationId, "Договор отвязан сотрудником");
             audit(operationId, "Отвязка договора", removed.contractId(),
-                    "Нет договора (ручной разбор)", actor, "Вручную", null,
+                    "Нет договора (ручной разбор)", actor, "Вручную", originalRun,
                     "", "", removed.reviewReason(), removed.justification(),
                     "Обработана (" + removed.method() + ")");
             changed();

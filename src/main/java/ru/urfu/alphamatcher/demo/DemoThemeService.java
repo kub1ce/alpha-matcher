@@ -43,6 +43,8 @@ public final class DemoThemeService {
                     tokens.delete('light');
                     tokens.add(dark ? 'dark' : 'light');
                     root.setAttribute('theme', [...tokens].join(' '));
+                    // Keep native controls and light-dark() tokens in the same scheme as the app.
+                    root.style.colorScheme = dark ? 'dark' : 'light';
                     try { localStorage.setItem($0, dark ? 'dark' : 'light'); } catch (ignored) { }
                     document.querySelectorAll('.theme-button').forEach(toggle => {
                         toggle.setAttribute('data-theme', dark ? 'dark' : 'light');

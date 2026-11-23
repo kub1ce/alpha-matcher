@@ -1,0 +1,40 @@
+CREATE TABLE bulk_preview_job (
+    id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+    initiator VARCHAR(254) NOT NULL,
+    from_date DATE NOT NULL,
+    to_date DATE NOT NULL,
+    include_processed BOOLEAN NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    inspected BIGINT NOT NULL DEFAULT 0,
+    safe_count BIGINT NOT NULL DEFAULT 0,
+    review_count BIGINT NOT NULL DEFAULT 0,
+    absent_count BIGINT NOT NULL DEFAULT 0,
+    skipped_count BIGINT NOT NULL DEFAULT 0,
+    selected_count BIGINT NOT NULL DEFAULT 0,
+    select_all BOOLEAN NOT NULL DEFAULT TRUE,
+    selection_epoch BIGINT NOT NULL DEFAULT 0,
+    started_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    heartbeat_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    finished_at DATETIME(6),
+    reason VARCHAR(255),
+    INDEX ix_bulk_preview_owner (initiator, started_at DESC, id),
+    CHECK (from_date <= to_date),
+    CHECK (status IN ('PREPARING','READY','CANCELLED','FAILED','INTERRUPTED')),
+    CHECK (inspected = safe_count + review_count + absent_count + skipped_count),
+    CHECK (selected_count BETWEEN 0 AND inspected)
+) ENGINE=InnoDB;
+
+CREATE TABLE bulk_preview_row (
+    job_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    operation_id BIGINT UNSIGNED NOT NULL,
+    operation_reference VARCHAR(128) NOT NULL,
+    source_version CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    decision_status VARCHAR(16) NOT NULL,
+    proposed_contract BIGINT UNSIGNED,
+    decision MEDIUMTEXT NOT NULL,
+    override_epoch BIGINT,
+    override_value BOOLEAN,
+    PRIMARY KEY (job_id, operation_id),
+    CONSTRAINT fk_bulk_preview_job FOREIGN KEY (job_id) REFERENCES bulk_preview_job (id),
+    CHECK (decision_status IN ('SAFE','REVIEW','NO_CONTRACT','SKIPPED'))
+) ENGINE=InnoDB;

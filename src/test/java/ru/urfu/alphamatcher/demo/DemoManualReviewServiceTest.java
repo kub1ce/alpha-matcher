@@ -8,10 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 
 class DemoManualReviewServiceTest {
-    private final DemoDataService data = new DemoDataService();
+    private final DemoDataService data = new ru.urfu.alphamatcher.demo.EngineStubDataService();
     private final DemoManualReviewService review = new DemoManualReviewService(data);
     private final DemoContractService contracts = new DemoContractService(data);
     private final DemoOperationState state = new DemoOperationState(data.originalFixtures());
+
+    @org.junit.jupiter.api.BeforeEach
+    void analyzeFixtures() {
+        new DemoMatchingService(data).preview(state, java.time.LocalDate.of(2026, 1, 1), java.time.LocalDate.of(2026, 12, 31), true, true);
+    }
 
     @Test
     void queueSearchCombinesTextAndActualReason() {

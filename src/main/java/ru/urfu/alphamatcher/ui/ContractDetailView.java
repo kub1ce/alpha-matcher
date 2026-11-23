@@ -18,6 +18,11 @@ public class ContractDetailView extends Div implements BeforeEnterObserver {
     private final DemoDataService data;
     private final DemoContractService contracts;
     private final DemoOperationState state;
+    private final AppPagination operationPagination = new AppPagination(target -> {
+        operationPage=target;
+        refresh();
+    });
+    private int operationPage;
     private String contractId;
     private String returnSource;
     private String operationReturnSource;
@@ -38,6 +43,7 @@ public class ContractDetailView extends Div implements BeforeEnterObserver {
         operationReturnSource = event.getLocation().getQueryParameters().getParameters()
                 .getOrDefault("return", java.util.List.of()).stream().findFirst().orElse("operations");
         contractId = id;
+        operationPage=0;
         refresh();
     }
 
@@ -53,36 +59,42 @@ public class ContractDetailView extends Div implements BeforeEnterObserver {
             return;
         }
         Div heading = UiParts.div("contract-heading", UiParts.div("contract-title-line",
-                UiParts.text("contract-title", contract.id()), UiParts.text("contract-id-chip", "ID: " + contract.id())),
+                UiParts.text("contract-title", data.contractNumber(contract)),
+                UiParts.text("contract-id-chip", "ID: " + contract.id())),
                 UiParts.text("contract-meta", "Дата заключения: " + contract.date()),
-                UiParts.text("contract-subject-full", contract.name()));
+                UiParts.text("contract-subject-full", data.contractDescription(contract)));
         Div hero = UiParts.div("contract-hero", back(), heading);
         Div parties = UiParts.div("contract-section",
                 UiParts.div("contract-section-header", UiParts.text("contract-section-title", "Стороны договора")),
                 UiParts.div("contract-party-grid",
-                        partyCard("ПЛАТЕЛЬЩИК", data.client(contract.payerId(), state), contract.id()),
-                        partyCard("ПОЛУЧАТЕЛЬ", data.client(contract.recipientId(), state), contract.id()),
+                        partyCard("ПЛАТЕЛЬЩИК", data.contractParty(contract, true, state), contract.id()),
+                        partyCard("ПОЛУЧАТЕЛЬ", data.contractParty(contract, false, state), contract.id()),
                         partyCard("ВЫГОДОПРИОБРЕТАТЕЛЬ", contract.beneficiary(), contract.id())));
-        var linked = contracts.linkedOperations(contract.id(), state);
+        var linked = contracts.linkedOperationPage(contract.id(),state,operationPage,AppPagination.PAGE_SIZE);
+        operationPage=linked.page();
         Div body = UiParts.div("contract-linked-body");
-        if (linked.isEmpty()) body.add(UiParts.text("contract-empty", "К договору пока не привязаны расчётные операции."));
+        if (linked.rows().isEmpty()) body.add(UiParts.text("contract-empty", "К договору пока не привязаны расчётные операции."));
         else {
             body.add(UiParts.div("contract-operation-grid contract-operation-header",
                     UiParts.text("", "Референс"), UiParts.text("", "Дата"),
                     UiParts.text("", "Плательщик"), UiParts.text("", "Сумма"),
                     UiParts.text("", "Способ привязки"), UiParts.text("", "Состояние"),
                     UiParts.text("", "Переход")));
-            for (var operation : linked) body.add(operationRow(operation, contract.id()));
+            for (var operation : linked.rows()) body.add(operationRow(operation, contract.id()));
         }
         Div operations = UiParts.div("contract-section contract-operations",
                 UiParts.div("contract-section-header", UiParts.text("contract-section-title", "Связанные расчётные операции"),
-                        UiParts.text("contract-linked-count", "Привязано операций: " + linked.size())), body);
+                        UiParts.text("contract-linked-count", "Привязано операций: " + linked.total())), body);
+        if (linked.pages()>1) {
+            operationPagination.update(linked.total(),operationPage);
+            operations.add(operationPagination);
+        }
         add(hero, parties, operations);
     }
 
     private RouterLink back() {
-        boolean fromClient = returnSource != null && returnSource.matches("client/CL-[0-9]{3}");
-        boolean fromOperation = returnSource != null && returnSource.matches("operation/PAY-2026-[0-9]{6}")
+        boolean fromClient = returnSource != null && returnSource.matches("client/(?:CL-[0-9]{3}|DB-CL-[0-9]{1,19})");
+        boolean fromOperation = returnSource != null && returnSource.matches("operation/[A-Za-z0-9_-]{1,64}")
                 && state.operation(returnSource.substring("operation/".length())) != null;
         RouterLink link = fromClient
                 ? new RouterLink("", ClientDetailView.class,

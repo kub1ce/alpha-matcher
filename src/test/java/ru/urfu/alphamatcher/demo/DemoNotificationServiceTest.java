@@ -16,7 +16,7 @@ class DemoNotificationServiceTest {
         var repeated = state.registerEvent(DemoNotificationService.Kind.INFO, "Пакет загружен", "RUN-019");
 
         assertEquals(first.id(), repeated.id());
-        assertEquals(3, state.unreadCount());
+        assertEquals(2, state.unreadCount());
         state.markRead(first.id());
         assertFalse(state.unreadItems().stream().anyMatch(item -> item.id().equals(first.id())));
     }
@@ -31,8 +31,8 @@ class DemoNotificationServiceTest {
 
         state.removeLegacyActionMessages();
 
-        assertEquals(5, state.items().size());
-        assertEquals(5, state.unreadCount());
+        assertEquals(4, state.items().size());
+        assertEquals(4, state.unreadCount());
         assertFalse(state.items().stream().anyMatch(item -> item.title().equals("Роль обновлена")));
         for (DemoNotificationService.Kind kind : DemoNotificationService.Kind.values()) {
             assertTrue(state.items().stream().anyMatch(item -> item.kind() == kind));
@@ -43,16 +43,19 @@ class DemoNotificationServiceTest {
     void readingHidesNotificationsWithoutDeletingHistory() {
         DemoNotificationService state = new DemoNotificationService();
 
+        assertEquals(0, state.unreadCount());
+        assertTrue(state.items().isEmpty());
+        var first = state.registerEvent(DemoNotificationService.Kind.WARNING, "Событие", "Проверить операцию");
         assertEquals(1, state.unreadCount());
-        assertEquals(1, state.unreadItems().size());
-        state.markRead("pay-185");
+        state.markRead(first.id());
         assertEquals(0, state.unreadCount());
         assertTrue(state.items().getFirst().read());
 
+        state.registerEvent(DemoNotificationService.Kind.INFO, "Пакет завершён", "Проверен результат");
         state.markAllRead();
         assertEquals(0, state.unreadCount());
         assertTrue(state.unreadItems().isEmpty());
-        assertEquals(1, state.items().size());
+        assertEquals(2, state.items().size());
         assertTrue(state.items().stream().allMatch(DemoNotificationService.Notice::read));
     }
 }

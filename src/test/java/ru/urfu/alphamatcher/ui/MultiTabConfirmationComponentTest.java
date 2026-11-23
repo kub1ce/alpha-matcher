@@ -29,7 +29,7 @@ import ru.urfu.alphamatcher.demo.*;
 
 /** Real view callbacks/dialogs in two UIs sharing one VaadinSession; no browser or database. */
 class MultiTabConfirmationComponentTest extends BrowserlessTest {
-    private final DemoDataService data = new DemoDataService();
+    private final DemoDataService data = new ru.urfu.alphamatcher.demo.EngineStubDataService();
     private final DemoMatchingService matching = new DemoMatchingService(data);
     private DemoOperationState state;
     private UI tabA;
@@ -131,6 +131,70 @@ class MultiTabConfirmationComponentTest extends BrowserlessTest {
     }
 
     @Test
+    void queuedBatchConfirmationCannotSurviveEmployeeSwitch() {
+        var view = matching(tabA);
+        select(view, "PAY-2026-000196");
+        button(view, "Привязать выбранные").click();
+        Button submit = button(dialog(tabA), "Подтвердить");
+        use(tabB);
+        DemoSession.login(DemoRole.OPERATIONS);
+        use(tabA);
+        submit.click();
+        assertFalse(state.isLinked("PAY-2026-000196"));
+        assertTrue(state.batchRuns().isEmpty());
+        assertTrue(state.auditEvents().isEmpty());
+    }
+
+    @Test
+    void newEmployeeCannotReuseThePreviousEmployeesCheckboxSelection() {
+        var view = matching(tabA);
+        select(view, "PAY-2026-000196");
+        use(tabB);
+        DemoSession.login(DemoRole.OPERATIONS);
+        use(tabA);
+        view.refreshUser();
+        assertTrue(DemoSession.matchingDraft().selected().isEmpty());
+        assertFalse(button(view, "Привязать выбранные").isEnabled());
+        assertTrue(state.auditEvents().isEmpty());
+    }
+
+    @Test
+    void jdbcOperationReturnSourcesUseTypedLinks() {
+        assertEquals("manual/EXP-004", OperationNavigation.back("manual/EXP-004").getHref());
+        assertEquals("contract/DB-101", OperationNavigation.back("contract/DB-101").getHref());
+        assertEquals("client/DB-CL-4", OperationNavigation.back("client/DB-CL-4").getHref());
+        assertEquals("section/operations", OperationNavigation.back("contract/redirect").getHref());
+    }
+
+    @Test
+    void originalEmployeeReturningDoesNotReactivateAnOldUnlinkCallback() {
+        var view = detail(tabA);
+        var previous = state.match("PAY-2026-000184");
+        button(view, "Отвязать договор").click();
+        Button submit = button(dialog(tabA), "Отвязать");
+        use(tabB);
+        DemoSession.login(DemoRole.OPERATIONS);
+        DemoSession.login(DemoRole.DECISION_MAKER);
+        use(tabA);
+        submit.click();
+        assertEquals(previous, state.match("PAY-2026-000184"));
+        assertTrue(state.auditEvents().isEmpty());
+    }
+
+    @Test
+    void navigatingBetweenManualCasesClearsPreviousJustification() {
+        var environment = new MockEnvironment();
+        environment.setActiveProfiles("demo");
+        var view = new ManualReviewDetailView(data, new DemoManualReviewService(data), environment);
+        tabA.add(view);
+        view.beforeEnter(event("manual/PAY-2026-000196", new RouteParameters("id", "PAY-2026-000196")));
+        var justification = find(TextArea.class, view).single();
+        justification.setValue("Обоснование первой операции");
+        view.beforeEnter(event("manual/PAY-2026-000197", new RouteParameters("id", "PAY-2026-000197")));
+        assertEquals("", find(TextArea.class, view).single().getValue());
+    }
+
+    @Test
     void recalculatingViewCannotMakeAnOpenStaleConfirmationCurrentAgain() {
         var a = matching(tabA);
         select(a, "PAY-2026-000196");
@@ -164,6 +228,7 @@ class MultiTabConfirmationComponentTest extends BrowserlessTest {
         session.getService().runPendingAccessTasks(session);
         tabA.getInternals().getStateTree().runExecutionsBeforeClientResponse();
         roundTrip();
+        awaitAnalysis(view);
         assertNull(from.getValue());
         assertEquals(original.from(), draft.preview().from());
         assertEquals(original.to(), draft.preview().to());
@@ -181,8 +246,20 @@ class MultiTabConfirmationComponentTest extends BrowserlessTest {
         when(event.getLocation()).thenReturn(new Location("section/matching",
                 com.vaadin.flow.router.QueryParameters.simple(java.util.Map.of("from", "2026-10-10", "to", "2026-10-12"))));
         view.beforeEnter(event);
+        awaitAnalysis(view);
         assertEquals(LocalDate.of(2026, 10, 10), draft.preview().from());
         assertEquals(LocalDate.of(2026, 10, 12), draft.preview().to());
+    }
+
+    private void awaitAnalysis(MatchingView view) {
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+        while (view.analysisRunning() && System.nanoTime() < deadline) {
+            VaadinSession session = VaadinSession.getCurrent();
+            session.getService().runPendingAccessTasks(session);
+            roundTrip();
+            try { Thread.sleep(10); } catch (InterruptedException e) { throw new AssertionError(e); }
+        }
+        assertFalse(view.analysisRunning(), "Asynchronous preview did not finish");
     }
 
     private void change(OperationDetailView view, String contractId) {

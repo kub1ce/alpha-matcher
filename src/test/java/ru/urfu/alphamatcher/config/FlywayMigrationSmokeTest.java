@@ -55,12 +55,19 @@ class FlywayMigrationSmokeTest {
                 assertNull(context.getStartupFailure());
                 Flyway flyway = context.getBean(Flyway.class);
                 assertTrue(flyway.validateWithResult().validationSuccessful);
-                assertEquals(1, flyway.info().applied().length);
+                assertEquals(6, flyway.info().applied().length);
                 assertEquals("1", flyway.info().applied()[0].getVersion().toString());
+                assertEquals("2", flyway.info().applied()[1].getVersion().toString());
+                assertEquals("3", flyway.info().applied()[2].getVersion().toString());
+                assertEquals("4", flyway.info().applied()[3].getVersion().toString());
+                assertEquals("5", flyway.info().applied()[4].getVersion().toString());
+                assertEquals("6", flyway.info().applied()[5].getVersion().toString());
             });
             assertEquals(Set.of("client_type", "document_type", "legal_form", "contract_type", "contract_party_role",
                     "operation_party_role", "operation_status", "client", "contract", "contract_party", "operation",
-                    "operation_party", "operation_contract_candidate", "flyway_schema_history"), tables(admin, "alpha_matcher"));
+                    "operation_party", "operation_contract_candidate", "flyway_schema_history",
+                    "bulk_preview_job", "bulk_preview_row", "bulk_source_revision", "bulk_executor_permission",
+                    "bulk_execution", "bulk_execution_result", "registry_gram_state", "registry_gram"), tables(admin, "alpha_matcher"));
             assertEquals(schemasBefore, values(admin, "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA"));
             assertEquals(Set.of("keep"), values(admin, "SELECT value FROM unrelated_probe.marker"));
 
@@ -70,7 +77,7 @@ class FlywayMigrationSmokeTest {
             application(url).run(context -> {
                 assertNull(context.getStartupFailure());
                 assertTrue(context.getBean(Flyway.class).validateWithResult().validationSuccessful);
-                assertEquals(1, context.getBean(Flyway.class).info().applied().length);
+                assertEquals(6, context.getBean(Flyway.class).info().applied().length);
             });
             assertEquals(Set.of("Existing row"), values(admin, "SELECT name FROM alpha_matcher.legal_form WHERE code='KEEP'"));
 

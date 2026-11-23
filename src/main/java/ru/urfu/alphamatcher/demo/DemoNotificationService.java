@@ -19,11 +19,7 @@ public final class DemoNotificationService {
         }
     }
 
-    private final List<Notice> notices = new ArrayList<>(List.of(
-            new Notice("pay-185", Kind.WARNING, "Требуется разбор операции PAY-2026-000185",
-                    "Платеж за третье лицо по договору AG-2026-031.",
-                    "12.10.2026, 11:18", false)
-    ));
+    private final List<Notice> notices = new ArrayList<>();
     private long nextEventId;
 
     public static DemoNotificationService current() {

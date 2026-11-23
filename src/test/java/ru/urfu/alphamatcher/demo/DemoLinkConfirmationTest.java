@@ -59,6 +59,19 @@ class DemoLinkConfirmationTest {
     }
 
     @Test
+    void sameNamesWithDifferentPartyIdsCannotReplaceAnExistingLink() {
+        var operation = state.operation(ID);
+        var wrong = new DemoDataService.Contract("QA-WRONG", "Другой договор", "2026-01-01",
+                operation.payer().name(), operation.recipient().name(), "Поставка", null,
+                "OTHER-CLIENT", operation.recipient().id());
+        var expected = state.match(ID);
+        assertThrows(IllegalArgumentException.class,
+                () -> state.changeLinkIfUnchanged(ID, expected, wrong.id(), java.util.List.of(wrong), "Проверены документы"));
+        assertEquals(expected, state.match(ID));
+        assertTrue(state.auditEvents().isEmpty());
+    }
+
+    @Test
     void simultaneousConfirmationsOfOneDecisionAllowOnlyOneMutation() throws Exception {
         var expected = state.match(ID);
         var start = new CountDownLatch(1);

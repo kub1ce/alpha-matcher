@@ -149,6 +149,8 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver, Before
                 {"Проверка парсинга назначений платежа", "/section/parsing"},
                 {"Профиль сотрудника", "/profile"}
         }));
+        String sourceLabel = data.sourceLabel();
+        if (!sourceLabel.isBlank()) sidebar.add(UiParts.text("muted", sourceLabel));
         addToDrawer(sidebar);
     }
 

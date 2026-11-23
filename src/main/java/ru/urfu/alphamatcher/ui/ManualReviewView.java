@@ -36,7 +36,7 @@ public class ManualReviewView extends Div {
         this.state = data.state();
         DemoStateUpdates.bind(this, state, this::refresh);
         setClassName("manual-review-page app-page");
-        search.setPlaceholder("Поиск по референсу, сторонам или назначению...");
+        search.setPlaceholder("Референс, участник, ИНН или назначение");
         search.setAriaLabel("Поиск в очереди ручного разбора");
         search.setValueChangeMode(ValueChangeMode.EAGER);
         search.addValueChangeListener(e -> refreshFromStart());

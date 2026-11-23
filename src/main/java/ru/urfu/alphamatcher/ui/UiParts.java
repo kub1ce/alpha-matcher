@@ -2,6 +2,7 @@ package ru.urfu.alphamatcher.ui;
 
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.Icon;
@@ -10,6 +11,14 @@ import com.vaadin.flow.router.RouterLink;
 
 public final class UiParts {
     private UiParts() { }
+
+    static void openDialog(Component owner, Dialog dialog) {
+        var detach = owner.addDetachListener(event -> dialog.close());
+        dialog.addOpenedChangeListener(event -> {
+            if (!event.isOpened()) detach.remove();
+        });
+        dialog.open();
+    }
 
     public static Div div(String css, Component... children) {
         Div div = new Div(children);
